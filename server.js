@@ -100,7 +100,7 @@ O escribe *menu* para reiniciar`;
       appname: "chatbotPruebas32",
     });
 
-    await axios.post(
+    /*await axios.post(
       "https://api.gupshup.io/wa/api/v1/msg",
       // Usamos qs o simplemente un string de parámetros para asegurar compatibilidad
       new URLSearchParams({
@@ -117,7 +117,19 @@ O escribe *menu* para reiniciar`;
           "Content-Type": "application/x-www-form-urlencoded",
         },
       }
-    );
+    );*/
+    const payload = `channel=whatsapp&source=${
+      process.env.GS_SOURCE_NUMBER
+    }&destination=${from}&message=${encodeURIComponent(
+      reply
+    )}&appname=chatbotPruebas32`;
+
+    await axios.post("https://api.gupshup.io/wa/api/v1/msg", payload, {
+      headers: {
+        apikey: process.env.GUPSHUP_API_KEY,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
 
     // Responder SOLO OK al webhook
     res.sendStatus(200);
