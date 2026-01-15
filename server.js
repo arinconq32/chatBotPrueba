@@ -114,7 +114,6 @@ O escribe *menu* para reiniciar`;
 
     // Responder en el formato que espera Gupshup
     res.status(200).json({
-      type: "text",
       text: reply,
     });
   } catch (err) {
