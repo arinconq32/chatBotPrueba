@@ -1,9 +1,9 @@
 require("dotenv").config();
 const express = require("express");
-const { handleMessage } = require("@builderbot/bot");
-const { flow } = require("./bot");
+const flow = require("./bot");
 
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -18,23 +18,20 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const response = await handleMessage({
-      body: text,
-      from,
-      flow,
-    });
+    // 👉 BUSCAR RESPUESTA EN EL FLOW
+    const answer = await flow.find(text, { from });
+
+    if (!answer) {
+      return res.json({ reply: 'Escribe "menu" para iniciar' });
+    }
 
     res.json({
-      reply: response?.answer || 'Escribe "menu" para iniciar',
+      reply: answer.answer,
     });
   } catch (err) {
-    console.error(err);
+    console.error("ERROR:", err);
     res.sendStatus(200);
   }
-});
-
-app.get("/webhook", (req, res) => {
-  res.status(200).send("Webhook funcionando correctamente ✅");
 });
 
 app.get("/", (_, res) => {
@@ -42,7 +39,6 @@ app.get("/", (_, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`Servidor escuchando en puerto ${PORT}`);
+  console.log(`Servidor en puerto ${PORT}`);
 });
