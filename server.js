@@ -94,42 +94,27 @@ O escribe *menu* para reiniciar`;
 
     console.log("📤 Enviando respuesta a WhatsApp:", reply);
 
-    console.log("Datos enviados a Gupshup:", {
-      source: process.env.GS_SOURCE_NUMBER,
-      destination: from,
-      appname: "chatbotPruebas32",
-    });
+    // SOLUCIÓN: Usar src.name en lugar de appname
+    const payload = `channel=whatsapp&source=${
+      process.env.GS_SOURCE_NUMBER
+    }&destination=${from}&message=${encodeURIComponent(
+      reply
+    )}&src.name=chatbotPruebas32`;
 
-    /*await axios.post(
+    console.log("Payload completo:", payload);
+
+    const response = await axios.post(
       "https://api.gupshup.io/wa/api/v1/msg",
-      // Usamos qs o simplemente un string de parámetros para asegurar compatibilidad
-      new URLSearchParams({
-        channel: "whatsapp",
-        source: process.env.GS_SOURCE_NUMBER,
-        destination: from,
-        message: reply,
-        src_name: "chatbotPruebas32", // Algunos endpoints de Gupshup prefieren src_name
-        appname: "chatbotPruebas32",
-      }).toString(),
+      payload,
       {
         headers: {
           apikey: process.env.GUPSHUP_API_KEY,
           "Content-Type": "application/x-www-form-urlencoded",
         },
       }
-    );*/
-    const payload = `channel=whatsapp&source=${
-      process.env.GS_SOURCE_NUMBER
-    }&destination=${from}&message=${encodeURIComponent(
-      reply
-    )}&appname=chatbotPruebas32`;
+    );
 
-    await axios.post("https://api.gupshup.io/wa/api/v1/msg", payload, {
-      headers: {
-        apikey: process.env.GUPSHUP_API_KEY,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-    });
+    console.log("✅ Respuesta de Gupshup:", response.data);
 
     // Responder SOLO OK al webhook
     res.sendStatus(200);
