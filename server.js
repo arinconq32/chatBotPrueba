@@ -16,27 +16,20 @@ app.post("/webhook", async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
     console.log("========================================");
 
+    // Extraer texto del mensaje
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
-    if (!message || !message.from) {
-      console.log("⚠️ Evento sin remitente (ignorado)");
+    // Validar que exista un mensaje de texto
+    if (!message || !message.text || !message.text.body || !message.from) {
+      console.log("⚠️ Evento sin texto o remitente (ignorado)");
+      console.log("Estructura recibida:", JSON.stringify(req.body, null, 2));
       return res.sendStatus(200);
     }
 
+    const text = message.text.body.toLowerCase().trim();
     const from = message.from;
-    let text = "";
 
-    // Detectar si es texto normal o respuesta de lista
-    if (message.text && message.text.body) {
-      text = message.text.body.toLowerCase().trim();
-    } else if (
-      message.interactive &&
-      message.interactive.type === "list_reply"
-    ) {
-      text = message.interactive.list_reply.id; // ID de la opción seleccionada
-    }
-
-    console.log("✅ Texto/ID extraído:", text);
+    console.log("✅ Texto extraído:", text);
     console.log("✅ From extraído:", from);
 
     // Inicializar sesión
@@ -49,114 +42,71 @@ app.post("/webhook", async (req, res) => {
       sessions[from].step = "menu";
     }
 
-    let messagePayload = null;
+    let reply = "";
 
     // Flujo del bot
     if (sessions[from].step === "menu") {
-      // MENSAJE CON LISTA
-      messagePayload = {
-        type: "interactive",
-        interactive: {
-          type: "list",
-          header: {
-            type: "text",
-            text: "Menú Principal",
-          },
-          body: {
-            text: "👋 ¡Bienvenido a nuestra empresa!\n\nSelecciona una opción del menú:",
-          },
-          footer: {
-            text: "Estamos aquí para ayudarte",
-          },
-          action: {
-            button: "Ver opciones",
-            sections: [
-              {
-                title: "Servicios",
-                rows: [
-                  {
-                    id: "opt_soporte",
-                    title: "🛠️ Soporte Técnico",
-                    description: "Ayuda con problemas técnicos",
-                  },
-                  {
-                    id: "opt_ventas",
-                    title: "💰 Ventas",
-                    description: "Conoce nuestros productos",
-                  },
-                  {
-                    id: "opt_asesor",
-                    title: "👤 Hablar con Asesor",
-                    description: "Contacto directo con un experto",
-                  },
-                ],
-              },
-              {
-                title: "Información",
-                rows: [
-                  {
-                    id: "opt_horarios",
-                    title: "🕐 Horarios",
-                    description: "Ver horarios de atención",
-                  },
-                  {
-                    id: "opt_ubicacion",
-                    title: "📍 Ubicación",
-                    description: "¿Dónde estamos?",
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      };
+      reply = `👋 ¡Bienvenido a nuestra empresa!
+
+¿En qué podemos ayudarte hoy?
+
+1️⃣ Soporte técnico
+2️⃣ Ventas
+3️⃣ Hablar con un asesor
+
+💬 Responde con el número de tu opción`;
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
-      if (text === "opt_soporte") {
-        messagePayload = {
-          type: "text",
-          text: "🛠️ *Soporte Técnico*\n\nAquí puedes encontrar soluciones a tus problemas:\n👉 https://tuapp.com/soporte\n\n💡 Escribe *menu* para volver al inicio.",
-        };
+      if (text === "1") {
+        reply = `🛠️ *Soporte Técnico*
+
+Aquí puedes encontrar soluciones a tus problemas:
+👉 https://tuapp.com/soporte
+
+💡 Escribe *menu* para volver al inicio.`;
         sessions[from].step = "menu";
-      } else if (text === "opt_ventas") {
-        messagePayload = {
-          type: "text",
-          text: "💰 *Ventas*\n\nConoce nuestros productos y servicios:\n👉 https://tuapp.com/ventas\n\n💡 Escribe *menu* para volver al inicio.",
-        };
+      } else if (text === "2") {
+        reply = `💰 *Ventas*
+
+Conoce nuestros productos y servicios:
+👉 https://tuapp.com/ventas
+
+💡 Escribe *menu* para volver al inicio.`;
         sessions[from].step = "menu";
-      } else if (text === "opt_asesor") {
-        messagePayload = {
-          type: "text",
-          text: "👤 *Asesor Humano*\n\nUn asesor se comunicará contigo pronto.\n⏰ L–V 9am–6pm\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else if (text === "opt_horarios") {
-        messagePayload = {
-          type: "text",
-          text: "🕐 *Horarios de Atención*\n\nLunes a Viernes: 9:00 AM - 6:00 PM\nSábados: 9:00 AM - 1:00 PM\nDomingos: Cerrado\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else if (text === "opt_ubicacion") {
-        messagePayload = {
-          type: "text",
-          text: "📍 *Nuestra Ubicación*\n\nCalle Principal #123\nBogotá, Colombia\n\n🗺️ Ver en mapa: https://maps.google.com\n\n💡 Escribe *menu* para volver al inicio.",
-        };
+      } else if (text === "3") {
+        reply = `👤 *Asesor Humano*
+
+Un asesor se comunicará contigo pronto.
+⏰ L–V 9am–6pm
+
+💡 Escribe *menu* para volver al inicio.`;
         sessions[from].step = "menu";
       } else {
-        messagePayload = {
-          type: "text",
-          text: "❌ Opción no válida\n\nEscribe *menu* para reiniciar",
-        };
+        reply = `❌ Opción no válida
+
+Responde:
+1️⃣ Soporte
+2️⃣ Ventas
+3️⃣ Asesor
+
+O escribe *menu* para reiniciar`;
       }
     }
 
-    console.log("📤 Enviando respuesta a WhatsApp");
+    console.log("📤 Enviando respuesta a WhatsApp:", reply);
 
+    // Formato JSON del mensaje según documentación de Gupshup
+    const messagePayload = JSON.stringify({
+      type: "text",
+      text: reply,
+    });
+
+    // Datos en formato URLSearchParams para POST
     const params = new URLSearchParams({
       channel: "whatsapp",
       source: process.env.GS_SOURCE_NUMBER,
       destination: from,
-      message: JSON.stringify(messagePayload),
+      message: messagePayload,
       "src.name": process.env.GUPSHUP_APP_NAME,
     });
 
@@ -176,9 +126,10 @@ app.post("/webhook", async (req, res) => {
 
     console.log("✅ Respuesta de Gupshup:", response.data);
 
+    // Responder con el mensaje para testing
     res.status(200).json({
       status: "success",
-      message: messagePayload,
+      message: reply,
       gupshup_response: response.data,
     });
   } catch (err) {
@@ -189,12 +140,13 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// Verificación
 app.get("/webhook", (req, res) => {
   res.send("Webhook activo ✅");
 });
 
 app.get("/", (req, res) => {
-  res.send("🤖 Bot WhatsApp con Listas activo 🚀");
+  res.send("🤖 Bot WhatsApp activo 🚀");
 });
 
 const PORT = process.env.PORT || 3000;
