@@ -16,20 +16,27 @@ app.post("/webhook", async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
     console.log("========================================");
 
-    // Extraer texto del mensaje
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
-    // Validar que exista un mensaje de texto
-    if (!message || !message.text || !message.text.body || !message.from) {
-      console.log("⚠️ Evento sin texto o remitente (ignorado)");
-      console.log("Estructura recibida:", JSON.stringify(req.body, null, 2));
+    if (!message || !message.from) {
+      console.log("⚠️ Evento sin remitente (ignorado)");
       return res.sendStatus(200);
     }
 
-    const text = message.text.body.toLowerCase().trim();
     const from = message.from;
+    let text = "";
 
-    console.log("✅ Texto extraído:", text);
+    // Detectar si es texto normal o respuesta de botón
+    if (message.text && message.text.body) {
+      text = message.text.body.toLowerCase().trim();
+    } else if (
+      message.interactive &&
+      message.interactive.type === "button_reply"
+    ) {
+      text = message.interactive.button_reply.id;
+    }
+
+    console.log("✅ Texto/ID extraído:", text);
     console.log("✅ From extraído:", from);
 
     // Inicializar sesión
@@ -42,71 +49,72 @@ app.post("/webhook", async (req, res) => {
       sessions[from].step = "menu";
     }
 
-    let reply = "";
+    let messagePayload = null;
 
     // Flujo del bot
     if (sessions[from].step === "menu") {
-      reply = `👋 ¡Bienvenido a nuestra empresa!
-
-¿En qué podemos ayudarte hoy?
-
-1️⃣ Soporte técnico
-2️⃣ Ventas
-3️⃣ Hablar con un asesor
-
-💬 Responde con el número de tu opción`;
+      // FORMATO CORRECTO DE GUPSHUP PARA BOTONES (QUICK REPLY)
+      messagePayload = {
+        type: "quick_reply",
+        msgid: "menu_principal",
+        content: {
+          type: "text",
+          text: "👋 ¡Bienvenido a nuestra empresa!\n\n¿En qué podemos ayudarte hoy?",
+          caption: "Selecciona una opción:",
+        },
+        options: [
+          {
+            type: "text",
+            title: "🛠️ Soporte",
+            postbackText: "btn_soporte",
+          },
+          {
+            type: "text",
+            title: "💰 Ventas",
+            postbackText: "btn_ventas",
+          },
+          {
+            type: "text",
+            title: "👤 Asesor",
+            postbackText: "btn_asesor",
+          },
+        ],
+      };
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
-      if (text === "1") {
-        reply = `🛠️ *Soporte Técnico*
-
-Aquí puedes encontrar soluciones a tus problemas:
-👉 https://tuapp.com/soporte
-
-💡 Escribe *menu* para volver al inicio.`;
+      if (text === "btn_soporte") {
+        messagePayload = {
+          type: "text",
+          text: "🛠️ *Soporte Técnico*\n\nAquí puedes encontrar soluciones a tus problemas:\n👉 https://tuapp.com/soporte\n\n💡 Escribe *menu* para volver al inicio.",
+        };
         sessions[from].step = "menu";
-      } else if (text === "2") {
-        reply = `💰 *Ventas*
-
-Conoce nuestros productos y servicios:
-👉 https://tuapp.com/ventas
-
-💡 Escribe *menu* para volver al inicio.`;
+      } else if (text === "btn_ventas") {
+        messagePayload = {
+          type: "text",
+          text: "💰 *Ventas*\n\nConoce nuestros productos y servicios:\n👉 https://tuapp.com/ventas\n\n💡 Escribe *menu* para volver al inicio.",
+        };
         sessions[from].step = "menu";
-      } else if (text === "3") {
-        reply = `👤 *Asesor Humano*
-
-Un asesor se comunicará contigo pronto.
-⏰ L–V 9am–6pm
-
-💡 Escribe *menu* para volver al inicio.`;
+      } else if (text === "btn_asesor") {
+        messagePayload = {
+          type: "text",
+          text: "👤 *Asesor Humano*\n\nUn asesor se comunicará contigo pronto.\n⏰ L–V 9am–6pm\n\n💡 Escribe *menu* para volver al inicio.",
+        };
         sessions[from].step = "menu";
       } else {
-        reply = `❌ Opción no válida
-
-Responde:
-1️⃣ Soporte
-2️⃣ Ventas
-3️⃣ Asesor
-
-O escribe *menu* para reiniciar`;
+        messagePayload = {
+          type: "text",
+          text: "❌ Opción no válida\n\nEscribe *menu* para reiniciar",
+        };
       }
     }
 
-    console.log("📤 Enviando respuesta a WhatsApp:", reply);
+    console.log("📤 Enviando respuesta a WhatsApp");
 
-    // Formato JSON del mensaje según documentación de Gupshup
-    const messagePayload = JSON.stringify({
-      type: "text",
-      text: reply,
-    });
-
-    // Datos en formato URLSearchParams para POST
     const params = new URLSearchParams({
       channel: "whatsapp",
       source: process.env.GS_SOURCE_NUMBER,
       destination: from,
-      message: messagePayload,
+      message: JSON.stringify(messagePayload),
       "src.name": process.env.GUPSHUP_APP_NAME,
     });
 
@@ -126,10 +134,9 @@ O escribe *menu* para reiniciar`;
 
     console.log("✅ Respuesta de Gupshup:", response.data);
 
-    // Responder con el mensaje para testing
     res.status(200).json({
       status: "success",
-      message: reply,
+      message: messagePayload,
       gupshup_response: response.data,
     });
   } catch (err) {
@@ -140,13 +147,12 @@ O escribe *menu* para reiniciar`;
   }
 });
 
-// Verificación
 app.get("/webhook", (req, res) => {
   res.send("Webhook activo ✅");
 });
 
 app.get("/", (req, res) => {
-  res.send("🤖 Bot WhatsApp activo 🚀");
+  res.send("🤖 Bot WhatsApp con Botones activo 🚀");
 });
 
 const PORT = process.env.PORT || 3000;
