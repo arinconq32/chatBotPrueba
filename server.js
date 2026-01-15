@@ -33,14 +33,25 @@ app.post("/webhook", async (req, res) => {
     } else if (message.type === "interactive") {
       // Respuesta de botón o lista en formato Gupshup
       if (message.interactive && message.interactive.button_reply) {
-        text = message.interactive.button_reply.id;
+        // El ID viene como JSON stringificado, necesitamos parsearlo
+        try {
+          const replyData = JSON.parse(message.interactive.button_reply.id);
+          text = replyData.postbackText;
+        } catch (e) {
+          // Si no es JSON, usar directamente el ID
+          text = message.interactive.button_reply.id;
+        }
       } else if (message.interactive && message.interactive.list_reply) {
-        text = message.interactive.list_reply.id;
+        try {
+          const replyData = JSON.parse(message.interactive.list_reply.id);
+          text = replyData.postbackText;
+        } catch (e) {
+          text = message.interactive.list_reply.id;
+        }
       }
     }
 
     console.log("✅ Tipo de mensaje:", message.type);
-    console.log("✅ Mensaje completo:", JSON.stringify(message, null, 2));
     console.log("✅ Texto/ID extraído:", text);
     console.log("✅ From extraído:", from);
 
@@ -58,94 +69,51 @@ app.post("/webhook", async (req, res) => {
 
     // Flujo del bot
     if (sessions[from].step === "menu") {
-      // FORMATO CORRECTO DE GUPSHUP PARA LISTAS
+      // FORMATO CORRECTO DE GUPSHUP PARA BOTONES (QUICK REPLY)
       messagePayload = {
-        type: "list",
-        title: "Menú Principal",
-        body: "👋 ¡Bienvenido a nuestra empresa!\n\n¿En qué podemos ayudarte hoy?",
-        footer: "Estamos aquí para ayudarte",
+        type: "quick_reply",
         msgid: "menu_principal",
-        globalButtons: [
+        content: {
+          type: "text",
+          text: "👋 ¡Bienvenido a nuestra empresa!\n\n¿En qué podemos ayudarte hoy?",
+          caption: "Selecciona una opción:",
+        },
+        options: [
           {
             type: "text",
-            title: "Ver opciones",
-          },
-        ],
-        items: [
-          {
-            title: "Servicios",
-            subtitle: "Nuestros servicios principales",
-            options: [
-              {
-                type: "text",
-                title: "🛠️ Soporte Técnico",
-                description: "Ayuda con problemas técnicos",
-                postbackText: "opt_soporte",
-              },
-              {
-                type: "text",
-                title: "💰 Ventas",
-                description: "Conoce nuestros productos",
-                postbackText: "opt_ventas",
-              },
-              {
-                type: "text",
-                title: "👤 Hablar con Asesor",
-                description: "Contacto directo con experto",
-                postbackText: "opt_asesor",
-              },
-            ],
+            title: "🛠️ Soporte",
+            postbackText: "btn_soporte",
           },
           {
-            title: "Información",
-            subtitle: "Datos de contacto",
-            options: [
-              {
-                type: "text",
-                title: "🕐 Horarios",
-                description: "Ver horarios de atención",
-                postbackText: "opt_horarios",
-              },
-              {
-                type: "text",
-                title: "📍 Ubicación",
-                description: "¿Dónde estamos?",
-                postbackText: "opt_ubicacion",
-              },
-            ],
+            type: "text",
+            title: "💰 Ventas",
+            postbackText: "btn_ventas",
+          },
+          {
+            type: "text",
+            title: "👤 Asesor",
+            postbackText: "btn_asesor",
           },
         ],
       };
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
-      if (text === "opt_soporte") {
+      if (text === "btn_soporte") {
         messagePayload = {
           type: "text",
           text: "🛠️ *Soporte Técnico*\n\nAquí puedes encontrar soluciones a tus problemas:\n👉 https://tuapp.com/soporte\n\n💡 Escribe *menu* para volver al inicio.",
         };
         sessions[from].step = "menu";
-      } else if (text === "opt_ventas") {
+      } else if (text === "btn_ventas") {
         messagePayload = {
           type: "text",
           text: "💰 *Ventas*\n\nConoce nuestros productos y servicios:\n👉 https://tuapp.com/ventas\n\n💡 Escribe *menu* para volver al inicio.",
         };
         sessions[from].step = "menu";
-      } else if (text === "opt_asesor") {
+      } else if (text === "btn_asesor") {
         messagePayload = {
           type: "text",
           text: "👤 *Asesor Humano*\n\nUn asesor se comunicará contigo pronto.\n⏰ L–V 9am–6pm\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else if (text === "opt_horarios") {
-        messagePayload = {
-          type: "text",
-          text: "🕐 *Horarios de Atención*\n\nLunes a Viernes: 9:00 AM - 6:00 PM\nSábados: 9:00 AM - 1:00 PM\nDomingos: Cerrado\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else if (text === "opt_ubicacion") {
-        messagePayload = {
-          type: "text",
-          text: "📍 *Nuestra Ubicación*\n\nCalle Principal #123\nBogotá, Colombia\n\n🗺️ Ver en mapa: https://maps.google.com\n\n💡 Escribe *menu* para volver al inicio.",
         };
         sessions[from].step = "menu";
       } else {
@@ -200,7 +168,7 @@ app.get("/webhook", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("🤖 Bot WhatsApp con Listas activo 🚀");
+  res.send("🤖 Bot WhatsApp con Botones activo 🚀");
 });
 
 const PORT = process.env.PORT || 3000;
