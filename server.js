@@ -22,6 +22,7 @@ app.post("/webhook", async (req, res) => {
     // Validar que exista un mensaje de texto
     if (!message || !message.text || !message.text.body || !message.from) {
       console.log("⚠️ Evento sin texto o remitente (ignorado)");
+      console.log("Estructura recibida:", JSON.stringify(req.body, null, 2));
       return res.sendStatus(200);
     }
 
@@ -125,8 +126,12 @@ O escribe *menu* para reiniciar`;
 
     console.log("✅ Respuesta de Gupshup:", response.data);
 
-    // Responder SOLO OK al webhook
-    res.sendStatus(200);
+    // Responder con el mensaje para testing
+    res.status(200).json({
+      status: "success",
+      message: reply,
+      gupshup_response: response.data,
+    });
   } catch (err) {
     console.error("❌ ERROR completo:", err.message);
     console.error("❌ ERROR data:", err.response?.data);
