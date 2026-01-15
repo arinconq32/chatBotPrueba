@@ -5,11 +5,14 @@ const { flow } = require("./bot");
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 app.post("/webhook", async (req, res) => {
   try {
-    const text = req.body.message?.text;
-    const from = req.body.sender?.phone;
+    console.log("BODY:", req.body);
+
+    const text = req.body.message;
+    const from = req.body.sender;
 
     if (!text || !from) {
       return res.sendStatus(200);
@@ -21,7 +24,6 @@ app.post("/webhook", async (req, res) => {
       flow,
     });
 
-    // Respuesta para Gupshup
     res.json({
       reply: response?.answer || 'Escribe "menu" para iniciar',
     });
