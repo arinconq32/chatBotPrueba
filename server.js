@@ -17,24 +17,10 @@ app.post("/webhook", async (req, res) => {
     console.log("========================================");
 
     // Extraer texto del mensaje
-    const text = (
-      req.body.payload?.text ||
-      req.body.payload?.payload?.text ||
-      req.body.message?.text ||
-      req.body.text ||
-      ""
-    )
-      .toLowerCase()
-      .trim();
+    const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
-    // Extraer número del remitente
-    const from =
-      req.body.payload?.sender?.phone ||
-      req.body.payload?.sender ||
-      req.body.sender?.phone ||
-      req.body.sender ||
-      req.body.from ||
-      "";
+    const text = message?.text?.body?.toLowerCase().trim() || "";
+    const from = message?.from || "";
 
     console.log("✅ Texto extraído:", text);
     console.log("✅ From extraído:", from);
@@ -116,6 +102,7 @@ O escribe *menu* para reiniciar`;
         source: process.env.GS_SOURCE_NUMBER,
         destination: from,
         message: reply,
+        appname: process.env.GUPSHUP_APP_NAME,
       }),
       {
         headers: {
