@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const axios = require("axios");
 
 const app = express();
 app.use(express.json());
@@ -10,54 +11,53 @@ const sessions = {};
 
 app.post("/webhook", async (req, res) => {
   try {
-    // 🔍 Log completo para debug
     console.log("========================================");
     console.log("📩 WEBHOOK RECIBIDO:");
     console.log(JSON.stringify(req.body, null, 2));
     console.log("========================================");
 
-    // 📝 Extraer datos según el formato de Gupshup (Meta v3)
-    // Gupshup puede enviar en diferentes formatos, intentamos todos
+    // Extraer texto del mensaje
     const text = (
-      req.body.payload?.text || // Formato Meta v3
-      req.body.payload?.payload?.text || // Formato anidado
-      req.body.message?.text || // Formato alternativo
-      req.body.text || // Formato simple
+      req.body.payload?.text ||
+      req.body.payload?.payload?.text ||
+      req.body.message?.text ||
+      req.body.text ||
       ""
     )
       .toLowerCase()
       .trim();
 
+    // Extraer número del remitente
     const from =
-      req.body.payload?.sender || // Formato Meta v3
-      req.body.payload?.source || // Formato alternativo
-      req.body.sender?.phone || // Tu formato
-      req.body.sender || // Formato simple
-      req.body.from || // Otro formato
+      req.body.payload?.sender?.phone ||
+      req.body.payload?.sender ||
+      req.body.sender?.phone ||
+      req.body.sender ||
+      req.body.from ||
       "";
 
     console.log("✅ Texto extraído:", text);
     console.log("✅ From extraído:", from);
 
-    // Si no hay datos válidos, responder OK para evitar reintentos
+    // Eventos del sistema (no mensaje de usuario)
     if (!text || !from) {
-      console.log("⚠️ Mensaje sin texto o remitente válido");
-      return res.status(200).json({ status: "ok" });
+      console.log("⚠️ Evento sin texto o remitente (ignorado)");
+      return res.sendStatus(200);
     }
 
-    let reply = "";
-
-    // Inicializar sesión si no existe
+    // Inicializar sesión
     if (!sessions[from]) {
       sessions[from] = { step: "menu" };
     }
 
-    // Permitir que el usuario escriba "menu" en cualquier momento
+    // Reset al menú
     if (text === "menu" || text === "menú") {
       sessions[from].step = "menu";
     }
 
-    // Flujo del chatbot
+    let reply = "";
+
+    // Flujo del bot
     if (sessions[from].step === "menu") {
       reply = `👋 ¡Bienvenido a nuestra empresa!
 
@@ -74,16 +74,14 @@ app.post("/webhook", async (req, res) => {
         reply = `🛠️ *Soporte Técnico*
 
 Aquí puedes encontrar soluciones a tus problemas:
-
 👉 https://tuapp.com/soporte
 
-💡 Si necesitas más ayuda, escribe *menu* para volver al inicio.`;
+💡 Escribe *menu* para volver al inicio.`;
         sessions[from].step = "menu";
       } else if (text === "2") {
         reply = `💰 *Ventas*
 
 Conoce nuestros productos y servicios:
-
 👉 https://tuapp.com/ventas
 
 💡 Escribe *menu* para volver al inicio.`;
@@ -91,53 +89,60 @@ Conoce nuestros productos y servicios:
       } else if (text === "3") {
         reply = `👤 *Asesor Humano*
 
-Perfecto, un asesor se comunicará contigo en breve.
-
-⏰ Horario de atención: Lunes a Viernes, 9am - 6pm
+Un asesor se comunicará contigo pronto.
+⏰ L–V 9am–6pm
 
 💡 Escribe *menu* para volver al inicio.`;
         sessions[from].step = "menu";
       } else {
         reply = `❌ Opción no válida
 
-Por favor responde con:
-1️⃣ para Soporte
-2️⃣ para Ventas  
-3️⃣ para Asesor
+Responde:
+1️⃣ Soporte
+2️⃣ Ventas
+3️⃣ Asesor
 
 O escribe *menu* para reiniciar`;
-        // NO cambiamos el step, seguimos esperando una opción válida
       }
     }
 
-    console.log("📤 Respuesta enviada:", reply);
+    console.log("📤 Enviando respuesta a WhatsApp:", reply);
 
-    // Responder en el formato que espera Gupshup
-    res.status(200).json({
-      text: reply,
-    });
+    // 👉 ENVÍO REAL DEL MENSAJE A WHATSAPP (ESTA ES LA CLAVE)
+    await axios.post(
+      "https://api.gupshup.io/wa/api/v1/msg",
+      new URLSearchParams({
+        channel: "whatsapp",
+        source: process.env.GS_SOURCE_NUMBER,
+        destination: from,
+        message: reply,
+      }),
+      {
+        headers: {
+          apikey: process.env.GUPSHUP_API_KEY,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+
+    // Responder SOLO OK al webhook
+    res.sendStatus(200);
   } catch (err) {
-    console.error("❌ ERROR:", err);
-    // Siempre responder 200 para evitar reintentos
-    res.status(200).json({ status: "error" });
+    console.error("❌ ERROR:", err.response?.data || err.message);
+    res.sendStatus(200);
   }
 });
 
-// Ruta GET para verificación del webhook
+// Verificación
 app.get("/webhook", (req, res) => {
-  console.log("✅ Verificación GET del webhook");
-  res.status(200).send("Webhook funcionando correctamente ✅");
+  res.send("Webhook activo ✅");
 });
 
-// Ruta raíz
 app.get("/", (req, res) => {
-  res.send("🤖 Bot de WhatsApp activo 🚀");
+  res.send("🤖 Bot WhatsApp activo 🚀");
 });
 
-// Puerto dinámico para Render
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`✅ Servidor escuchando en puerto ${PORT}`);
-  console.log(`🌐 URL: http://localhost:${PORT}`);
 });
