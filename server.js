@@ -94,16 +94,23 @@ O escribe *menu* para reiniciar`;
 
     console.log("📤 Enviando respuesta a WhatsApp:", reply);
 
-    // 👉 ENVÍO REAL DEL MENSAJE A WHATSAPP (ESTA ES LA CLAVE)
+    console.log("Datos enviados a Gupshup:", {
+      source: process.env.GS_SOURCE_NUMBER,
+      destination: from,
+      appname: "chatbotPruebas32",
+    });
+
     await axios.post(
       "https://api.gupshup.io/wa/api/v1/msg",
+      // Usamos qs o simplemente un string de parámetros para asegurar compatibilidad
       new URLSearchParams({
         channel: "whatsapp",
         source: process.env.GS_SOURCE_NUMBER,
         destination: from,
         message: reply,
+        src_name: "chatbotPruebas32", // Algunos endpoints de Gupshup prefieren src_name
         appname: "chatbotPruebas32",
-      }),
+      }).toString(),
       {
         headers: {
           apikey: process.env.GUPSHUP_API_KEY,
