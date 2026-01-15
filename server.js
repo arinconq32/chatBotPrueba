@@ -102,7 +102,7 @@ O escribe *menu* para reiniciar`;
         source: process.env.GS_SOURCE_NUMBER,
         destination: from,
         message: reply,
-        appname: process.env.GUPSHUP_APP_NAME,
+        appname: "chatbotPruebas32",
       }),
       {
         headers: {
