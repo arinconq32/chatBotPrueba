@@ -19,17 +19,17 @@ app.post("/webhook", async (req, res) => {
     // Extraer texto del mensaje
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
-    const text = message?.text?.body?.toLowerCase().trim() || "";
-    const from = message?.from || "";
-
-    console.log("✅ Texto extraído:", text);
-    console.log("✅ From extraído:", from);
-
-    // Eventos del sistema (no mensaje de usuario)
-    if (!text || !from) {
+    // Validar que exista un mensaje de texto
+    if (!message || !message.text || !message.text.body || !message.from) {
       console.log("⚠️ Evento sin texto o remitente (ignorado)");
       return res.sendStatus(200);
     }
+
+    const text = message.text.body.toLowerCase().trim();
+    const from = message.from;
+
+    console.log("✅ Texto extraído:", text);
+    console.log("✅ From extraído:", from);
 
     // Inicializar sesión
     if (!sessions[from]) {
