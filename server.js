@@ -16,7 +16,7 @@ const STATES = {
 
 const sessions = {};
 
-// URL de tu plataforma de agentes
+// Plataforma de agentes
 const PLATFORM_WEBHOOK_URL =
   "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
 
@@ -33,7 +33,6 @@ app.post("/webhook", async (req, res) => {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
     if (!message || !message.from) {
-      console.log("⚠️ Evento sin mensaje o remitente");
       return res.sendStatus(200);
     }
 
@@ -41,107 +40,86 @@ app.post("/webhook", async (req, res) => {
     let text = "";
 
     // ====================
-    // Extraer texto / botón
+    // EXTRAER TEXTO
     // ====================
     if (message.text?.body) {
       text = message.text.body.toLowerCase().trim();
-    } else if (message.type === "interactive") {
-      const btn =
-        message.interactive?.button_reply || message.interactive?.list_reply;
-      if (btn?.id) text = btn.id;
     }
+
+    // ====================
+    // NORMALIZAR BOTONES (CLAVE)
+    // ====================
+    if (text.includes("soporte")) text = "btn_soporte";
+    else if (text.includes("ventas")) text = "btn_ventas";
+    else if (text.includes("asesor")) text = "btn_asesor";
 
     console.log("➡️ From:", from);
-    console.log("➡️ Text:", text);
+    console.log("➡️ Text normalizado:", text);
 
     // ====================
-    // Inicializar sesión
+    // INICIALIZAR SESIÓN
     // ====================
     if (!sessions[from]) {
-      sessions[from] = {
-        step: "menu",
-        state: STATES.BOT,
-      };
+      sessions[from] = { step: "menu", state: STATES.BOT };
     }
 
     // ================================
-    // 🔄 MODO AGENTE → reenviar TODO
+    // 🔄 MODO AGENTE
     // ================================
     if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log("🔄 Reenviando mensaje a plataforma");
-
       try {
         await axios.post(PLATFORM_WEBHOOK_URL, req.body, {
           headers: { "Content-Type": "application/json" },
           timeout: 5000,
         });
-
         return res.sendStatus(200);
-      } catch (err) {
-        console.error("❌ Error plataforma:", err.message);
-
+      } catch {
         await sendText(
           from,
-          "⚠️ Problema de conexión con soporte.\n\nEscribe *menu* para volver."
+          "⚠️ Problema con soporte.\n\nEscribe *menu* para volver."
         );
-
-        sessions[from].state = STATES.BOT;
-        sessions[from].step = "menu";
-
+        sessions[from] = { step: "menu", state: STATES.BOT };
         return res.sendStatus(200);
       }
     }
 
     // ====================
-    // Reset manual a menú
+    // RESET A MENÚ
     // ====================
     if (text === "menu" || text === "menú") {
-      sessions[from].state = STATES.BOT;
-      sessions[from].step = "menu";
+      sessions[from] = { step: "menu", state: STATES.BOT };
     }
 
     // ====================
-    // 🛠️ SOPORTE (ANTES DEL MENÚ)
+    // SOPORTE
     // ====================
     if (text === "btn_soporte") {
       sessions[from].state = STATES.WITH_AGENT;
-      sessions[from].step = "agent";
 
       await sendText(
         from,
-        "🛠️ *Conectando con Soporte*\n\n✍️ Escribe tu mensaje y un agente te atenderá."
+        "🛠️ *Conectando con Soporte*\n\n✍️ Escribe tu mensaje."
       );
 
-      let agentAvailable = true;
-
       try {
-        await axios.post(
-          PLATFORM_WEBHOOK_URL,
-          {
-            event: "conversation_started",
-            from,
-            timestamp: new Date().toISOString(),
-          },
-          { timeout: 10000 }
-        );
+        await axios.post(PLATFORM_WEBHOOK_URL, {
+          event: "conversation_started",
+          from,
+          timestamp: new Date().toISOString(),
+        });
       } catch {
-        agentAvailable = false;
-      }
-
-      if (!agentAvailable) {
         await sendText(
           from,
-          "⚠️ *No hay agentes disponibles*\n\nEscribe *menu* para volver."
+          "⚠️ No hay agentes disponibles.\n\nEscribe *menu* para volver."
         );
-        sessions[from].state = STATES.BOT;
-        sessions[from].step = "menu";
+        sessions[from] = { step: "menu", state: STATES.BOT };
       }
 
-      return res.sendStatus(200); // 🔴 CLAVE
+      return res.sendStatus(200);
     }
 
     // ====================
-    // MENÚ PRINCIPAL
+    // MENÚ
     // ====================
     if (sessions[from].step === "menu") {
       await sendQuickMenu(from);
@@ -156,7 +134,7 @@ app.post("/webhook", async (req, res) => {
       if (text === "btn_ventas") {
         await sendText(
           from,
-          "💰 *Ventas*\n👉 https://tuapp.com/ventas\n\nEscribe *menu* para volver."
+          "💰 *Ventas*\n👉 https://tuapp.com/ventas\n\nEscribe *menu*"
         );
         sessions[from].step = "menu";
         return res.sendStatus(200);
@@ -165,7 +143,7 @@ app.post("/webhook", async (req, res) => {
       if (text === "btn_asesor") {
         await sendText(
           from,
-          "👤 *Asesor humano*\n⏰ L–V 9am–6pm\n\nEscribe *menu* para volver."
+          "👤 *Asesor humano*\n⏰ L–V 9am–6pm\n\nEscribe *menu*"
         );
         sessions[from].step = "menu";
         return res.sendStatus(200);
@@ -177,7 +155,7 @@ app.post("/webhook", async (req, res) => {
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ ERROR GENERAL:", err.message);
+    console.error("❌ ERROR:", err.message);
     res.sendStatus(200);
   }
 });
@@ -186,16 +164,11 @@ app.post("/webhook", async (req, res) => {
 // HELPERS
 // ====================
 async function sendText(to, text) {
-  const payload = {
-    type: "text",
-    text,
-  };
-
   const params = new URLSearchParams({
     channel: "whatsapp",
     source: process.env.GS_SOURCE_NUMBER,
     destination: to,
-    message: JSON.stringify(payload),
+    message: JSON.stringify({ type: "text", text }),
     "src.name": process.env.GUPSHUP_APP_NAME,
   });
 
@@ -215,9 +188,9 @@ async function sendQuickMenu(to) {
       text: "👋 ¡Bienvenido!\n¿En qué podemos ayudarte?",
     },
     options: [
-      { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
-      { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
-      { type: "text", title: "👤 Asesor", postbackText: "btn_asesor" },
+      { type: "text", title: "🛠️ Soporte" },
+      { type: "text", title: "💰 Ventas" },
+      { type: "text", title: "👤 Asesor" },
     ],
   };
 
@@ -237,8 +210,6 @@ async function sendQuickMenu(to) {
   });
 }
 
-// ====================
-// ENDPOINTS
 // ====================
 app.get("/webhook", (_, res) => res.send("Webhook activo ✅"));
 app.get("/", (_, res) => res.send("🤖 Bot activo"));
