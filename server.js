@@ -143,7 +143,7 @@ app.post("/webhook", async (req, res) => {
     // ====================
     // MENÚ PRINCIPAL
     // ====================
-    if (sessions[from].step === "menu" && !text) {
+    if (sessions[from].step === "menu") {
       await sendQuickMenu(from);
       sessions[from].step = "option";
       return res.sendStatus(200);
