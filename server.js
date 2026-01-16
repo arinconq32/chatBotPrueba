@@ -9,6 +9,7 @@ app.use(express.urlencoded({ extended: true }));
 // Estados de la conversación
 const STATES = {
   BOT: "bot",
+  CONNECTING: "connecting",
   WITH_AGENT: "with_agent",
 };
 
@@ -18,10 +19,10 @@ const sessions = {};
 async function sendGupshupMessage(destination, payload) {
   const params = new URLSearchParams({
     channel: "whatsapp",
-    source: process.env.GS_SOURCE_NUMBER,
+    source: process.env.GS_SOURCE_NUMBER || "919999900095",
     destination: destination,
     message: JSON.stringify(payload),
-    "src.name": process.env.GUPSHUP_APP_NAME,
+    "src.name": process.env.GUPSHUP_APP_NAME || "chatbotPruebas32",
   });
 
   return await axios.post(
@@ -71,7 +72,7 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log(`Forwarding message from ${from} to external support...`);
+      console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
       try {
         await axios.post(
           "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
@@ -82,8 +83,16 @@ app.post("/webhook", async (req, res) => {
           }
         );
       } catch (e) {
-        console.error("Error forwarding to support:", e.message);
+        console.error("❌ Error reenviando al soporte:", e.message);
       }
+      return res.sendStatus(200);
+    }
+
+    // Si está conectando, ignorar mensajes hasta que termine
+    if (sessions[from].state === STATES.CONNECTING) {
+      console.log(
+        `⏳ Usuario ${from} está en proceso de conexión, ignorando mensaje`
+      );
       return res.sendStatus(200);
     }
 
@@ -112,42 +121,68 @@ app.post("/webhook", async (req, res) => {
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
       if (text === "btn_soporte") {
+        // ===== PASO 1: Aviso de conexión en progreso =====
+        console.log(`🔄 Usuario ${from} solicita soporte...`);
+
+        // Cambiar estado a CONNECTING inmediatamente
+        sessions[from].state = STATES.CONNECTING;
+
+        // Enviar mensaje de "conectando..."
+        messagePayload = {
+          type: "text",
+          text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
+        };
+
+        await sendGupshupMessage(from, messagePayload);
+
+        // ===== PASO 2: Intentar conexión al webhook externo =====
         console.log(
           `--- Intentando conectar ${from} con soporte (10s timeout) ---`
         );
 
         try {
-          // 1. Intentar POST al webhook externo con límite de 10 segundos
-          await axios.post(
+          // POST al webhook externo con "soporte" como palabra
+          const response = await axios.post(
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
               event: "support_requested",
+              message: "soporte", // ← La palabra "soporte"
               timestamp: new Date().toISOString(),
             },
             { timeout: 10000 } // 10000 ms = 10 segundos
           );
 
-          // 2. Si responde a tiempo, activar modo agente
+          console.log(`✅ Agente conectado para ${from}`);
+
+          // ===== PASO 3: Éxito - Aviso de conexión exitosa =====
           sessions[from].state = STATES.WITH_AGENT;
           messagePayload = {
             type: "text",
-            text: "🛠️ *Conectando con Soporte*\n\n✅ Un agente ha sido notificado y te atenderá en breve.\n\n_Ahora estás en chat directo._",
+            text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n_Ahora estás en chat directo con nuestro equipo de soporte._",
           };
+
+          await sendGupshupMessage(from, messagePayload);
         } catch (error) {
-          // 3. Si falla o tarda más de 10s
-          console.log(
-            `⚠️ Soporte no disponible para ${from}: ${
-              error.code === "ECONNABORTED" ? "Timeout" : "Error"
-            }`
-          );
+          // ===== PASO 3: Error - Aviso de falla de conexión =====
+          const errorType =
+            error.code === "ECONNABORTED" ? "Timeout (>10s)" : error.message;
+          console.log(`❌ Soporte no disponible para ${from}: ${errorType}`);
+
+          // Restablecer estado a BOT
+          sessions[from].state = STATES.BOT;
+          sessions[from].step = "menu";
 
           messagePayload = {
             type: "text",
-            text: "🛠️ *Soporte Técnico*\n\n⚠️ Lo sentimos, en este momento no hay agentes disponibles o el tiempo de espera ha expirado.\n\n💡 Escribe *menu* para volver a intentar más tarde.",
+            text: "🛠️ *Soporte Técnico*\n\n❌ Lo sentimos, en este momento no hay agentes disponibles.\n\n💡 Escribe *menu* para intentar más tarde o elige otra opción.",
           };
-          sessions[from].step = "menu";
+
+          await sendGupshupMessage(from, messagePayload);
         }
+
+        // Retornar aquí porque ya enviamos los mensajes
+        return res.sendStatus(200);
       } else if (text === "btn_ventas") {
         messagePayload = {
           type: "text",
@@ -169,26 +204,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Endpoint para que el agente responda desde la plataforma externa
-app.post("/agent/send-message", async (req, res) => {
-  try {
-    const { destination, message } = req.body;
-
-    if (
-      !sessions[destination] ||
-      sessions[destination].state !== STATES.WITH_AGENT
-    ) {
-      return res.status(403).json({ error: "Sesión no está en modo agente" });
-    }
-
-    await sendGupshupMessage(destination, { type: "text", text: message });
-    res.json({ status: "success" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
