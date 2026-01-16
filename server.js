@@ -6,9 +6,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ====================
-// Estados de sesión
-// ====================
+// Estados de la conversación
 const STATES = {
   BOT: "bot",
   WITH_AGENT: "with_agent",
@@ -16,226 +14,181 @@ const STATES = {
 
 const sessions = {};
 
-// URL de tu plataforma de agentes
-const PLATFORM_WEBHOOK_URL =
-  "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
+// Helper para enviar mensajes a Gupshup
+async function sendGupshupMessage(destination, payload) {
+  const params = new URLSearchParams({
+    channel: "whatsapp",
+    source: process.env.GS_SOURCE_NUMBER,
+    destination: destination,
+    message: JSON.stringify(payload),
+    "src.name": process.env.GUPSHUP_APP_NAME,
+  });
 
-// ====================
-// WEBHOOK PRINCIPAL
-// ====================
+  return await axios.post(
+    "https://api.gupshup.io/wa/api/v1/msg",
+    params.toString(),
+    {
+      headers: {
+        apikey: process.env.GUPSHUP_API_KEY,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Cache-Control": "no-cache",
+      },
+    }
+  );
+}
+
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("========================================");
-    console.log("📥 WEBHOOK RECIBIDO");
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log("========================================");
-
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+
     if (!message || !message.from) {
-      console.log("⚠️ Evento sin mensaje o remitente");
       return res.sendStatus(200);
     }
 
     const from = message.from;
     let text = "";
 
-    // ====================
-    // Extraer texto / botón
-    // ====================
-    if (message.text?.body) {
+    // Extraer texto o ID de botones
+    if (message.text && message.text.body) {
       text = message.text.body.toLowerCase().trim();
     } else if (message.type === "interactive") {
-      const btn =
-        message.interactive?.button_reply || message.interactive?.list_reply;
-      if (btn?.id) text = btn.id;
-    }
-
-    console.log("➡️ From:", from);
-    console.log("➡️ Text:", text);
-
-    // ====================
-    // Inicializar sesión
-    // ====================
-    if (!sessions[from]) {
-      sessions[from] = {
-        step: "menu",
-        state: STATES.BOT,
-      };
-    }
-
-    // ================================
-    // 🔄 MODO AGENTE → reenviar TODO
-    // ================================
-    if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log("🔄 Reenviando mensaje a plataforma");
-      try {
-        await axios.post(PLATFORM_WEBHOOK_URL, req.body, {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          timeout: 5000,
-        });
-        return res.sendStatus(200);
-      } catch (err) {
-        console.error("❌ Error plataforma:", err.message);
-        await sendText(
-          from,
-          "⚠️ Problema de conexión con soporte.\n\nEscribe *menu* para volver."
-        );
-        sessions[from].state = STATES.BOT;
-        sessions[from].step = "menu";
-        return res.sendStatus(200);
+      const interactive = message.interactive;
+      const reply = interactive.button_reply || interactive.list_reply;
+      if (reply) {
+        try {
+          const replyData = JSON.parse(reply.id);
+          text = replyData.postbackText;
+        } catch (e) {
+          text = reply.id;
+        }
       }
     }
 
-    // ====================
-    // Reset manual a menú
-    // ====================
-    if (text === "menu" || text === "menú") {
-      sessions[from].state = STATES.BOT;
-      sessions[from].step = "menu";
+    // Inicializar sesión
+    if (!sessions[from]) {
+      sessions[from] = { step: "menu", state: STATES.BOT };
     }
 
-    // ====================
-    // MENÚ PRINCIPAL
-    // ====================
-    if (sessions[from].step === "menu") {
-      await sendQuickMenu(from);
-      sessions[from].step = "option";
+    // Si ya está con un agente, reenviar mensaje a la plataforma externa
+    if (sessions[from].state === STATES.WITH_AGENT) {
+      console.log(`Forwarding message from ${from} to external support...`);
+      try {
+        await axios.post(
+          "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+          {
+            from,
+            text,
+            type: "incoming_message",
+          }
+        );
+      } catch (e) {
+        console.error("Error forwarding to support:", e.message);
+      }
       return res.sendStatus(200);
     }
 
-    // ====================
-    // OPCIONES
-    // ====================
-    if (sessions[from].step === "option") {
+    // Reset al menú
+    if (text === "menu" || text === "menú") {
+      sessions[from].step = "menu";
+      sessions[from].state = STATES.BOT;
+    }
+
+    let messagePayload = null;
+
+    // FLUJO DEL BOT
+    if (sessions[from].step === "menu") {
+      messagePayload = {
+        type: "quick_reply",
+        msgid: "menu_principal",
+        content: {
+          type: "text",
+          text: "👋 ¡Bienvenido!\n\n¿En qué podemos ayudarte hoy?",
+        },
+        options: [
+          { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
+          { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
+        ],
+      };
+      sessions[from].step = "option";
+    } else if (sessions[from].step === "option") {
       if (text === "btn_soporte") {
-        sessions[from].state = STATES.WITH_AGENT;
-        sessions[from].step = "agent";
-        await sendText(
-          from,
-          "🛠️ *Conectando con Soporte*\n\n✍️ Escribe tu mensaje y un agente te atenderá."
+        console.log(
+          `--- Intentando conectar ${from} con soporte (10s timeout) ---`
         );
-        let agentAvailable = true;
+
         try {
+          // 1. Intentar POST al webhook externo con límite de 10 segundos
           await axios.post(
-            PLATFORM_WEBHOOK_URL,
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
-              event: "conversation_started",
-              from,
+              from: from,
+              event: "support_requested",
               timestamp: new Date().toISOString(),
             },
-            { timeout: 10000 }
+            { timeout: 10000 } // 10000 ms = 10 segundos
           );
-        } catch {
-          agentAvailable = false;
-        }
-        if (!agentAvailable) {
-          await sendText(
-            from,
-            "⚠️ *No hay agentes disponibles*\n\nEscribe *menu* para volver."
+
+          // 2. Si responde a tiempo, activar modo agente
+          sessions[from].state = STATES.WITH_AGENT;
+          messagePayload = {
+            type: "text",
+            text: "🛠️ *Conectando con Soporte*\n\n✅ Un agente ha sido notificado y te atenderá en breve.\n\n_Ahora estás en chat directo._",
+          };
+        } catch (error) {
+          // 3. Si falla o tarda más de 10s
+          console.log(
+            `⚠️ Soporte no disponible para ${from}: ${
+              error.code === "ECONNABORTED" ? "Timeout" : "Error"
+            }`
           );
-          sessions[from].state = STATES.BOT;
+
+          messagePayload = {
+            type: "text",
+            text: "🛠️ *Soporte Técnico*\n\n⚠️ Lo sentimos, en este momento no hay agentes disponibles o el tiempo de espera ha expirado.\n\n💡 Escribe *menu* para volver a intentar más tarde.",
+          };
           sessions[from].step = "menu";
         }
-        return res.sendStatus(200);
       } else if (text === "btn_ventas") {
-        await sendText(
-          from,
-          "💰 *Ventas*\n👉 https://tuapp.com/ventas\n\nEscribe *menu* para volver."
-        );
+        messagePayload = {
+          type: "text",
+          text: "💰 *Ventas*\n\nVisita nuestra web: https://tuapp.com/ventas\n\nEscribe *menu* para volver.",
+        };
         sessions[from].step = "menu";
-        return res.sendStatus(200);
-      } else if (text === "btn_asesor") {
-        await sendText(
-          from,
-          "👤 *Asesor humano*\n⏰ L–V 9am–6pm\n\nEscribe *menu* para volver."
-        );
-        sessions[from].step = "menu";
-        return res.sendStatus(200);
-      } else {
-        await sendText(from, "❌ Opción no válida.\nEscribe *menu*");
-        return res.sendStatus(200);
       }
+    }
+
+    // Enviar respuesta final si existe un payload
+    if (messagePayload) {
+      await sendGupshupMessage(from, messagePayload);
     }
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ ERROR GENERAL:", err.message);
+    console.error("❌ Error Webhook:", err.message);
     res.sendStatus(200);
   }
 });
 
-// ====================
-// HELPERS
-// ====================
-async function sendText(to, text) {
-  const payload = {
-    type: "text",
-    text,
-  };
-  const params = new URLSearchParams({
-    channel: "whatsapp",
-    source: process.env.GS_SOURCE_NUMBER,
-    destination: to,
-    message: JSON.stringify(payload),
-    "src.name": process.env.GUPSHUP_APP_NAME,
-  });
-  await axios.post("https://api.gupshup.io/wa/api/v1/msg", params, {
-    headers: {
-      apikey: process.env.GUPSHUP_API_KEY,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-  });
-}
+// Endpoint para que el agente responda desde la plataforma externa
+app.post("/agent/send-message", async (req, res) => {
+  try {
+    const { destination, message } = req.body;
 
-async function sendQuickMenu(to) {
-  const payload = {
-    type: "quick_reply",
-    content: {
-      type: "text",
-      text: "👋 ¡Bienvenido!\n¿En qué podemos ayudarte?",
-    },
-    options: [
-      {
-        type: "text",
-        title: "🛠️ Soporte",
-        postbackText: "btn_soporte",
-      },
-      {
-        type: "text",
-        title: "💰 Ventas",
-        postbackText: "btn_ventas",
-      },
-      {
-        type: "text",
-        title: "👤 Asesor",
-        postbackText: "btn_asesor",
-      },
-    ],
-  };
-  const params = new URLSearchParams({
-    channel: "whatsapp",
-    source: process.env.GS_SOURCE_NUMBER,
-    destination: to,
-    message: JSON.stringify(payload),
-    "src.name": process.env.GUPSHUP_APP_NAME,
-  });
-  await axios.post("https://api.gupshup.io/wa/api/v1/msg", params, {
-    headers: {
-      apikey: process.env.GUPSHUP_API_KEY,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-  });
-}
+    if (
+      !sessions[destination] ||
+      sessions[destination].state !== STATES.WITH_AGENT
+    ) {
+      return res.status(403).json({ error: "Sesión no está en modo agente" });
+    }
 
-// ====================
-// ENDPOINTS
-// ====================
-app.get("/webhook", (_, res) => res.send("Webhook activo ✅"));
-app.get("/", (_, res) => res.send("🤖 Bot activo"));
+    await sendGupshupMessage(destination, { type: "text", text: message });
+    res.json({ status: "success" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor en puerto ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
