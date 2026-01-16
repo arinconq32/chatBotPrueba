@@ -146,13 +146,13 @@ app.post("/webhook", async (req, res) => {
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
+              text: "soporte", // ← Cambiar message por text
+              type: "incoming_message",
               event: "support_requested",
-              message: "soporte", // ← La palabra "soporte"
               timestamp: new Date().toISOString(),
             },
-            { timeout: 10000 } // 10000 ms = 10 segundos
+            { timeout: 10000 }
           );
-
           console.log(`✅ Agente conectado para ${from}`);
 
           // ===== PASO 3: Éxito - Aviso de conexión exitosa =====
