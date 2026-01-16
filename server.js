@@ -121,13 +121,28 @@ app.post("/webhook", async (req, res) => {
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
       if (text === "btn_soporte") {
-        // ===== PASO 1: Aviso de conexión en progreso =====
         console.log(`🔄 Usuario ${from} solicita soporte...`);
 
-        // Cambiar estado a CONNECTING inmediatamente
+        // ===== PASO 1: Guardar "soporte" en el chat =====
+        try {
+          await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "soporte",
+              type: "incoming_message",
+            },
+            { timeout: 5000 }
+          );
+          console.log(`✅ Mensaje 'soporte' guardado en el chat`);
+        } catch (e) {
+          console.error("⚠️ Error guardando 'soporte' en chat:", e.message);
+        }
+
+        // ===== PASO 2: Cambiar estado a CONNECTING =====
         sessions[from].state = STATES.CONNECTING;
 
-        // Enviar mensaje de "conectando..."
+        // ===== PASO 3: Aviso de conexión en progreso =====
         messagePayload = {
           type: "text",
           text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
@@ -135,18 +150,17 @@ app.post("/webhook", async (req, res) => {
 
         await sendGupshupMessage(from, messagePayload);
 
-        // ===== PASO 2: Intentar conexión al webhook externo =====
+        // ===== PASO 4: Intentar conexión al webhook externo =====
         console.log(
           `--- Intentando conectar ${from} con soporte (10s timeout) ---`
         );
 
         try {
-          // POST al webhook externo con "soporte" como palabra
           const response = await axios.post(
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
-              text: "soporte", // ← Cambiar message por text
+              text: "soporte",
               type: "incoming_message",
               event: "support_requested",
               object: "whatsapp_business_account",
@@ -154,9 +168,10 @@ app.post("/webhook", async (req, res) => {
             },
             { timeout: 10000 }
           );
+
           console.log(`✅ Agente conectado para ${from}`);
 
-          // ===== PASO 3: Éxito - Aviso de conexión exitosa =====
+          // ===== PASO 5: Éxito - Aviso de conexión exitosa =====
           sessions[from].state = STATES.WITH_AGENT;
           messagePayload = {
             type: "text",
@@ -165,7 +180,7 @@ app.post("/webhook", async (req, res) => {
 
           await sendGupshupMessage(from, messagePayload);
         } catch (error) {
-          // ===== PASO 3: Error - Aviso de falla de conexión =====
+          // ===== PASO 5: Error - Aviso de falla de conexión =====
           const errorType =
             error.code === "ECONNABORTED" ? "Timeout (>10s)" : error.message;
           console.log(`❌ Soporte no disponible para ${from}: ${errorType}`);
