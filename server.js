@@ -149,6 +149,7 @@ app.post("/webhook", async (req, res) => {
               text: "soporte", // ← Cambiar message por text
               type: "incoming_message",
               event: "support_requested",
+              object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
             },
             { timeout: 10000 }
