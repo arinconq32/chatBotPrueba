@@ -18,40 +18,6 @@ const sessions = {};
 const PLATFORM_WEBHOOK_URL =
   "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
 
-// Función para enviar mensajes a tu plataforma
-async function sendToPlatform(from, message, messageData = {}) {
-  try {
-    const payload = {
-      from: from,
-      message: message,
-      timestamp: new Date().toISOString(),
-      messageType: messageData.type || "text",
-      fullMessageData: messageData, // Incluye el mensaje completo de WhatsApp
-    };
-
-    console.log(
-      `📨 Enviando a plataforma ${PLATFORM_WEBHOOK_URL}:`,
-      JSON.stringify(payload, null, 2)
-    );
-
-    const response = await axios.post(PLATFORM_WEBHOOK_URL, payload, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-      timeout: 5000, // 5 segundos de timeout
-    });
-
-    console.log(`✅ Respuesta de plataforma:`, response.data);
-    return true;
-  } catch (error) {
-    console.error(`❌ Error al enviar a plataforma:`, error.message);
-    if (error.response) {
-      console.error(`❌ Detalles del error:`, error.response.data);
-    }
-    return false;
-  }
-}
-
 app.post("/webhook", async (req, res) => {
   try {
     console.log("========================================");
@@ -102,21 +68,65 @@ app.post("/webhook", async (req, res) => {
       };
     }
 
-    // ⭐ IMPORTANTE: Si la conversación está con un agente, enviar TODO a la plataforma
+    // ⭐ Si la conversación está con un agente, reenviar a tu plataforma
     if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log(
-        "🔄 Conversación en modo AGENTE - enviando mensaje a plataforma"
-      );
+      console.log("🔄 Conversación en modo AGENTE - reenviando a plataforma");
 
-      // Enviar el mensaje completo a tu plataforma
-      await sendToPlatform(from, text, message);
+      try {
+        // Reenviar el mensaje completo a tu plataforma
+        const platformResponse = await axios.post(
+          PLATFORM_WEBHOOK_URL,
+          req.body, // Enviar el body completo tal cual llega de WhatsApp
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+            timeout: 5000, // 5 segundos de timeout
+          }
+        );
 
-      // No enviar respuesta automática del bot
-      // El agente responderá desde tu plataforma
-      return res.status(200).json({
-        status: "forwarded_to_agent",
-        message: "Mensaje reenviado a plataforma de agentes",
-      });
+        console.log("✅ Mensaje reenviado a plataforma exitosamente");
+        console.log("✅ Respuesta de plataforma:", platformResponse.data);
+
+        // Tu plataforma maneja todo desde ahí
+        return res.status(200).json({
+          status: "forwarded_to_platform",
+          message: "Mensaje reenviado a agente",
+        });
+      } catch (error) {
+        console.error("❌ Error al reenviar a plataforma:", error.message);
+
+        // ⭐ Si falla, responder con mensaje automático
+        const fallbackPayload = {
+          type: "text",
+          text: "⚠️ Lo sentimos, estamos experimentando problemas de conexión.\n\nPor favor intenta de nuevo en unos momentos.\n\n💡 Escribe *menu* para volver al inicio.",
+        };
+
+        const params = new URLSearchParams({
+          channel: "whatsapp",
+          source: process.env.GS_SOURCE_NUMBER,
+          destination: from,
+          message: JSON.stringify(fallbackPayload),
+          "src.name": process.env.GUPSHUP_APP_NAME,
+        });
+
+        await axios.post(
+          "https://api.gupshup.io/wa/api/v1/msg",
+          params.toString(),
+          {
+            headers: {
+              apikey: process.env.GUPSHUP_API_KEY,
+              "Content-Type": "application/x-www-form-urlencoded",
+              "Cache-Control": "no-cache",
+            },
+          }
+        );
+
+        return res.status(200).json({
+          status: "platform_error_fallback_sent",
+          error: error.message,
+        });
+      }
     }
 
     // Reset al menú (solo si está en modo bot)
@@ -158,32 +168,36 @@ app.post("/webhook", async (req, res) => {
       sessions[from].step = "option";
     } else if (sessions[from].step === "option") {
       if (text === "btn_soporte") {
-        // ⭐ Cambiar estado a modo agente
+        // ⭐ Cambiar a modo agente
         sessions[from].state = STATES.WITH_AGENT;
 
-        // ⭐ Enviar notificación inicial a la plataforma
-        const sent = await sendToPlatform(from, "INICIO_SOPORTE", {
-          type: "support_request",
-          action: "conversation_started",
-        });
+        console.log(`✅ Usuario ${from} ahora en modo AGENTE`);
 
-        if (sent) {
-          console.log(`✅ Usuario ${from} ahora en modo AGENTE`);
-
-          messagePayload = {
-            type: "text",
-            text: "🛠️ *Conectando con Soporte*\n\n✅ Un agente está revisando tu caso...\nEn breve te responderá.\n\n_Ahora estás chateando con un agente humano._\n\n💡 Escribe tu consulta y un agente te responderá.",
-          };
-        } else {
-          // Si falla el envío a la plataforma, volver a modo bot
-          sessions[from].state = STATES.BOT;
-          sessions[from].step = "menu";
-
-          messagePayload = {
-            type: "text",
-            text: "🛠️ *Soporte Técnico*\n\n⚠️ No pudimos conectar con nuestro sistema de agentes.\n\nPor favor intenta de nuevo en unos momentos.\n\n💡 Escribe *menu* para volver al inicio.",
-          };
+        // ⭐ Notificar a la plataforma que se inició conversación
+        try {
+          await axios.post(
+            PLATFORM_WEBHOOK_URL,
+            {
+              event: "conversation_started",
+              from: from,
+              timestamp: new Date().toISOString(),
+            },
+            {
+              headers: { "Content-Type": "application/json" },
+              timeout: 3000,
+            }
+          );
+        } catch (error) {
+          console.error(
+            "⚠️ No se pudo notificar inicio a plataforma:",
+            error.message
+          );
         }
+
+        messagePayload = {
+          type: "text",
+          text: "🛠️ *Conectando con Soporte*\n\n✅ Un agente está revisando tu caso...\n\n_Escribe tu consulta y un agente te responderá._",
+        };
       } else if (text === "btn_ventas") {
         messagePayload = {
           type: "text",
@@ -243,122 +257,12 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ⭐ Endpoint para que tu plataforma envíe respuestas al usuario
-app.post("/platform/send-message", async (req, res) => {
-  try {
-    const { destination, message } = req.body;
-
-    if (!destination || !message) {
-      return res.status(400).json({
-        error: "Faltan parámetros requeridos",
-        required: ["destination", "message"],
-      });
-    }
-
-    // Verificar que la conversación esté en modo agente
-    if (
-      !sessions[destination] ||
-      sessions[destination].state !== STATES.WITH_AGENT
-    ) {
-      return res.status(403).json({
-        error: "Esta conversación no está asignada a un agente",
-        currentState: sessions[destination]?.state || "sin_sesion",
-      });
-    }
-
-    console.log(`📤 Plataforma enviando mensaje a ${destination}`);
-
-    const messagePayload = {
-      type: "text",
-      text: message,
-    };
-
-    const params = new URLSearchParams({
-      channel: "whatsapp",
-      source: process.env.GS_SOURCE_NUMBER,
-      destination: destination,
-      message: JSON.stringify(messagePayload),
-      "src.name": process.env.GUPSHUP_APP_NAME,
-    });
-
-    const response = await axios.post(
-      "https://api.gupshup.io/wa/api/v1/msg",
-      params.toString(),
-      {
-        headers: {
-          apikey: process.env.GUPSHUP_API_KEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cache-Control": "no-cache",
-        },
-      }
-    );
-
-    console.log("✅ Mensaje de plataforma enviado correctamente");
-
-    res.status(200).json({
-      status: "success",
-      gupshup_response: response.data,
-    });
-  } catch (err) {
-    console.error("❌ ERROR al enviar mensaje desde plataforma:", err.message);
-    res.status(500).json({
-      error: "Error al enviar mensaje",
-      details: err.message,
-    });
-  }
-});
-
-// ⭐ Endpoint para finalizar conversación con agente
-app.post("/platform/end-conversation", async (req, res) => {
-  try {
-    const { destination } = req.body;
-
-    if (!destination) {
-      return res.status(400).json({ error: "Falta parámetro: destination" });
-    }
-
-    if (sessions[destination]) {
-      sessions[destination].state = STATES.BOT;
-      sessions[destination].step = "menu";
-
-      console.log(
-        `✅ Conversación ${destination} finalizada - volviendo a modo bot`
-      );
-
-      res.status(200).json({
-        status: "success",
-        message: "Conversación finalizada",
-      });
-    } else {
-      res.status(404).json({ error: "Sesión no encontrada" });
-    }
-  } catch (err) {
-    console.error("❌ ERROR al finalizar conversación:", err.message);
-    res.status(500).json({ error: "Error al finalizar conversación" });
-  }
-});
-
 app.get("/webhook", (req, res) => {
   res.send("Webhook activo ✅");
 });
 
 app.get("/", (req, res) => {
-  res.send("🤖 Bot WhatsApp con integración de agentes ✅");
-});
-
-// ⭐ Endpoint para verificar estado de sesión (útil para debugging)
-app.get("/session/:phone", (req, res) => {
-  const phone = req.params.phone;
-  const session = sessions[phone];
-
-  if (session) {
-    res.json({
-      phone: phone,
-      session: session,
-    });
-  } else {
-    res.status(404).json({ error: "Sesión no encontrada" });
-  }
+  res.send("🤖 Bot WhatsApp activo ✅");
 });
 
 const PORT = process.env.PORT || 3000;
