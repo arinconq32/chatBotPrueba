@@ -6,7 +6,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Estados posibles de una conversación
+// ====================
+// Estados de sesión
+// ====================
 const STATES = {
   BOT: "bot",
   WITH_AGENT: "with_agent",
@@ -18,49 +20,43 @@ const sessions = {};
 const PLATFORM_WEBHOOK_URL =
   "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
 
+// ====================
+// WEBHOOK PRINCIPAL
+// ====================
 app.post("/webhook", async (req, res) => {
   try {
     console.log("========================================");
-    console.log("📥 WEBHOOK RECIBIDO:");
+    console.log("📥 WEBHOOK RECIBIDO");
     console.log(JSON.stringify(req.body, null, 2));
     console.log("========================================");
 
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
     if (!message || !message.from) {
-      console.log("⚠️ Evento sin remitente (ignorado)");
+      console.log("⚠️ Evento sin mensaje o remitente");
       return res.sendStatus(200);
     }
 
     const from = message.from;
     let text = "";
 
-    // Detectar tipo de mensaje
-    if (message.text && message.text.body) {
+    // ====================
+    // Extraer texto / botón
+    // ====================
+    if (message.text?.body) {
       text = message.text.body.toLowerCase().trim();
     } else if (message.type === "interactive") {
-      if (message.interactive && message.interactive.button_reply) {
-        try {
-          const replyData = JSON.parse(message.interactive.button_reply.id);
-          text = replyData.postbackText;
-        } catch (e) {
-          text = message.interactive.button_reply.id;
-        }
-      } else if (message.interactive && message.interactive.list_reply) {
-        try {
-          const replyData = JSON.parse(message.interactive.list_reply.id);
-          text = replyData.postbackText;
-        } catch (e) {
-          text = message.interactive.list_reply.id;
-        }
-      }
+      const btn =
+        message.interactive?.button_reply || message.interactive?.list_reply;
+      if (btn?.id) text = btn.id;
     }
 
-    console.log("✅ Tipo de mensaje:", message.type);
-    console.log("✅ Texto/ID extraído:", text);
-    console.log("✅ From extraído:", from);
+    console.log("➡️ From:", from);
+    console.log("➡️ Text:", text);
 
+    // ====================
     // Inicializar sesión
+    // ====================
     if (!sessions[from]) {
       sessions[from] = {
         step: "menu",
@@ -68,205 +64,186 @@ app.post("/webhook", async (req, res) => {
       };
     }
 
-    // ⭐ Si la conversación está con un agente, reenviar a tu plataforma
+    // ================================
+    // 🔄 MODO AGENTE → reenviar TODO
+    // ================================
     if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log("🔄 Conversación en modo AGENTE - reenviando a plataforma");
+      console.log("🔄 Reenviando mensaje a plataforma");
 
       try {
-        // Reenviar el mensaje completo a tu plataforma
-        const platformResponse = await axios.post(
-          PLATFORM_WEBHOOK_URL,
-          req.body, // Enviar el body completo tal cual llega de WhatsApp
-          {
-            headers: {
-              "Content-Type": "application/json",
-            },
-            timeout: 5000, // 5 segundos de timeout
-          }
+        await axios.post(PLATFORM_WEBHOOK_URL, req.body, {
+          headers: { "Content-Type": "application/json" },
+          timeout: 5000,
+        });
+
+        return res.sendStatus(200);
+      } catch (err) {
+        console.error("❌ Error plataforma:", err.message);
+
+        await sendText(
+          from,
+          "⚠️ Problema de conexión con soporte.\n\nEscribe *menu* para volver."
         );
 
-        console.log("✅ Mensaje reenviado a plataforma exitosamente");
-        console.log("✅ Respuesta de plataforma:", platformResponse.data);
+        sessions[from].state = STATES.BOT;
+        sessions[from].step = "menu";
 
-        // Tu plataforma maneja todo desde ahí
-        return res.status(200).json({
-          status: "forwarded_to_platform",
-          message: "Mensaje reenviado a agente",
-        });
-      } catch (error) {
-        console.error("❌ Error al reenviar a plataforma:", error.message);
-
-        // ⭐ Si falla, responder con mensaje automático
-        const fallbackPayload = {
-          type: "text",
-          text: "⚠️ Lo sentimos, estamos experimentando problemas de conexión.\n\nPor favor intenta de nuevo en unos momentos.\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-
-        const params = new URLSearchParams({
-          channel: "whatsapp",
-          source: process.env.GS_SOURCE_NUMBER,
-          destination: from,
-          message: JSON.stringify(fallbackPayload),
-          "src.name": process.env.GUPSHUP_APP_NAME,
-        });
-
-        await axios.post(
-          "https://api.gupshup.io/wa/api/v1/msg",
-          params.toString(),
-          {
-            headers: {
-              apikey: process.env.GUPSHUP_API_KEY,
-              "Content-Type": "application/x-www-form-urlencoded",
-              "Cache-Control": "no-cache",
-            },
-          }
-        );
-
-        return res.status(200).json({
-          status: "platform_error_fallback_sent",
-          error: error.message,
-        });
+        return res.sendStatus(200);
       }
     }
 
-    // Reset al menú (solo si está en modo bot)
+    // ====================
+    // Reset manual a menú
+    // ====================
     if (text === "menu" || text === "menú") {
-      sessions[from].step = "menu";
       sessions[from].state = STATES.BOT;
+      sessions[from].step = "menu";
     }
 
-    let messagePayload = null;
+    // ====================
+    // 🛠️ SOPORTE (ANTES DEL MENÚ)
+    // ====================
+    if (text === "btn_soporte") {
+      sessions[from].state = STATES.WITH_AGENT;
+      sessions[from].step = "agent";
 
-    // Flujo del bot
-    if (sessions[from].step === "menu") {
-      messagePayload = {
-        type: "quick_reply",
-        msgid: "menu_principal",
-        content: {
-          type: "text",
-          text: "👋 ¡Bienvenido a nuestra empresa!\n\n¿En qué podemos ayudarte hoy?",
-          caption: "Selecciona una opción:",
-        },
-        options: [
+      await sendText(
+        from,
+        "🛠️ *Conectando con Soporte*\n\n✍️ Escribe tu mensaje y un agente te atenderá."
+      );
+
+      let agentAvailable = true;
+
+      try {
+        await axios.post(
+          PLATFORM_WEBHOOK_URL,
           {
-            type: "text",
-            title: "🛠️ Soporte",
-            postbackText: "btn_soporte",
+            event: "conversation_started",
+            from,
+            timestamp: new Date().toISOString(),
           },
-          {
-            type: "text",
-            title: "💰 Ventas",
-            postbackText: "btn_ventas",
-          },
-          {
-            type: "text",
-            title: "👤 Asesor",
-            postbackText: "btn_asesor",
-          },
-        ],
-      };
+          { timeout: 10000 }
+        );
+      } catch {
+        agentAvailable = false;
+      }
+
+      if (!agentAvailable) {
+        await sendText(
+          from,
+          "⚠️ *No hay agentes disponibles*\n\nEscribe *menu* para volver."
+        );
+        sessions[from].state = STATES.BOT;
+        sessions[from].step = "menu";
+      }
+
+      return res.sendStatus(200); // 🔴 CLAVE
+    }
+
+    // ====================
+    // MENÚ PRINCIPAL
+    // ====================
+    if (sessions[from].step === "menu" && !text) {
+      await sendQuickMenu(from);
       sessions[from].step = "option";
-    } else if (sessions[from].step === "option") {
-      if (text === "btn_soporte") {
-        // ⭐ Cambiar a modo agente
-        sessions[from].state = STATES.WITH_AGENT;
-
-        console.log(`✅ Usuario ${from} ahora en modo AGENTE`);
-
-        // ⭐ Notificar a la plataforma que se inició conversación
-        try {
-          await axios.post(
-            PLATFORM_WEBHOOK_URL,
-            {
-              event: "conversation_started",
-              from: from,
-              timestamp: new Date().toISOString(),
-            },
-            {
-              headers: { "Content-Type": "application/json" },
-              timeout: 3000,
-            }
-          );
-        } catch (error) {
-          console.error(
-            "⚠️ No se pudo notificar inicio a plataforma:",
-            error.message
-          );
-        }
-
-        messagePayload = {
-          type: "text",
-          text: "🛠️ *Conectando con Soporte*\n\n✅ Un agente está revisando tu caso...\n\n_Escribe tu consulta y un agente te responderá._",
-        };
-      } else if (text === "btn_ventas") {
-        messagePayload = {
-          type: "text",
-          text: "💰 *Ventas*\n\nConoce nuestros productos y servicios:\n👉 https://tuapp.com/ventas\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else if (text === "btn_asesor") {
-        messagePayload = {
-          type: "text",
-          text: "👤 *Asesor Humano*\n\nUn asesor se comunicará contigo pronto.\n⏰ L–V 9am–6pm\n\n💡 Escribe *menu* para volver al inicio.",
-        };
-        sessions[from].step = "menu";
-      } else {
-        messagePayload = {
-          type: "text",
-          text: "❌ Opción no válida\n\nEscribe *menu* para reiniciar",
-        };
-      }
+      return res.sendStatus(200);
     }
 
-    console.log("📤 Enviando respuesta a WhatsApp");
-
-    const params = new URLSearchParams({
-      channel: "whatsapp",
-      source: process.env.GS_SOURCE_NUMBER,
-      destination: from,
-      message: JSON.stringify(messagePayload),
-      "src.name": process.env.GUPSHUP_APP_NAME,
-    });
-
-    console.log("📦 Datos POST enviados:", params.toString());
-
-    const response = await axios.post(
-      "https://api.gupshup.io/wa/api/v1/msg",
-      params.toString(),
-      {
-        headers: {
-          apikey: process.env.GUPSHUP_API_KEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cache-Control": "no-cache",
-        },
+    // ====================
+    // OPCIONES
+    // ====================
+    if (sessions[from].step === "option") {
+      if (text === "btn_ventas") {
+        await sendText(
+          from,
+          "💰 *Ventas*\n👉 https://tuapp.com/ventas\n\nEscribe *menu* para volver."
+        );
+        sessions[from].step = "menu";
+        return res.sendStatus(200);
       }
-    );
 
-    console.log("✅ Respuesta de Gupshup:", response.data);
+      if (text === "btn_asesor") {
+        await sendText(
+          from,
+          "👤 *Asesor humano*\n⏰ L–V 9am–6pm\n\nEscribe *menu* para volver."
+        );
+        sessions[from].step = "menu";
+        return res.sendStatus(200);
+      }
 
-    res.status(200).json({
-      status: "success",
-      message: messagePayload,
-      gupshup_response: response.data,
-    });
+      await sendText(from, "❌ Opción no válida.\nEscribe *menu*");
+      return res.sendStatus(200);
+    }
+
+    res.sendStatus(200);
   } catch (err) {
-    console.error("❌ ERROR completo:", err.message);
-    console.error("❌ ERROR data:", err.response?.data);
-    console.error("❌ ERROR status:", err.response?.status);
+    console.error("❌ ERROR GENERAL:", err.message);
     res.sendStatus(200);
   }
 });
 
-app.get("/webhook", (req, res) => {
-  res.send("Webhook activo ✅");
-});
+// ====================
+// HELPERS
+// ====================
+async function sendText(to, text) {
+  const payload = {
+    type: "text",
+    text,
+  };
 
-app.get("/", (req, res) => {
-  res.send("🤖 Bot WhatsApp activo ✅");
-});
+  const params = new URLSearchParams({
+    channel: "whatsapp",
+    source: process.env.GS_SOURCE_NUMBER,
+    destination: to,
+    message: JSON.stringify(payload),
+    "src.name": process.env.GUPSHUP_APP_NAME,
+  });
+
+  await axios.post("https://api.gupshup.io/wa/api/v1/msg", params, {
+    headers: {
+      apikey: process.env.GUPSHUP_API_KEY,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+  });
+}
+
+async function sendQuickMenu(to) {
+  const payload = {
+    type: "quick_reply",
+    content: {
+      type: "text",
+      text: "👋 ¡Bienvenido!\n¿En qué podemos ayudarte?",
+    },
+    options: [
+      { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
+      { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
+      { type: "text", title: "👤 Asesor", postbackText: "btn_asesor" },
+    ],
+  };
+
+  const params = new URLSearchParams({
+    channel: "whatsapp",
+    source: process.env.GS_SOURCE_NUMBER,
+    destination: to,
+    message: JSON.stringify(payload),
+    "src.name": process.env.GUPSHUP_APP_NAME,
+  });
+
+  await axios.post("https://api.gupshup.io/wa/api/v1/msg", params, {
+    headers: {
+      apikey: process.env.GUPSHUP_API_KEY,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+  });
+}
+
+// ====================
+// ENDPOINTS
+// ====================
+app.get("/webhook", (_, res) => res.send("Webhook activo ✅"));
+app.get("/", (_, res) => res.send("🤖 Bot activo"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en puerto ${PORT}`);
-  console.log(`📡 Plataforma de agentes: ${PLATFORM_WEBHOOK_URL}`);
+  console.log(`🚀 Servidor en puerto ${PORT}`);
 });
