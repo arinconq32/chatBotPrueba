@@ -25,17 +25,24 @@ async function sendGupshupMessage(destination, payload) {
     "src.name": process.env.GUPSHUP_APP_NAME || "chatbotPruebas32",
   });
 
-  return await axios.post(
-    "https://api.gupshup.io/wa/api/v1/msg",
-    params.toString(),
-    {
-      headers: {
-        apikey: process.env.GUPSHUP_API_KEY,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Cache-Control": "no-cache",
+  try {
+    const response = await axios.post(
+      "https://api.gupshup.io/wa/api/v1/msg",
+      params.toString(),
+      {
+        headers: {
+          apikey: process.env.GUPSHUP_API_KEY,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Cache-Control": "no-cache",
+        },
       },
-    }
-  );
+    );
+    console.log(`✅ Mensaje enviado a ${destination}`);
+    return response.data;
+  } catch (error) {
+    console.error(`❌ Error enviando mensaje a ${destination}:`, error.message);
+    throw error;
+  }
 }
 
 app.post("/webhook", async (req, res) => {
@@ -65,9 +72,12 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
+    console.log(`📨 Mensaje recibido de ${from}: "${text}"`);
+
     // Inicializar sesión
     if (!sessions[from]) {
       sessions[from] = { step: "menu", state: STATES.BOT };
+      console.log(`👤 Nueva sesión creada para ${from}`);
     }
 
     // Si ya está con un agente, reenviar mensaje a la plataforma externa
@@ -80,7 +90,7 @@ app.post("/webhook", async (req, res) => {
             from,
             text,
             type: "incoming_message",
-          }
+          },
         );
       } catch (e) {
         console.error("❌ Error reenviando al soporte:", e.message);
@@ -91,7 +101,7 @@ app.post("/webhook", async (req, res) => {
     // Si está conectando, ignorar mensajes hasta que termine
     if (sessions[from].state === STATES.CONNECTING) {
       console.log(
-        `⏳ Usuario ${from} está en proceso de conexión, ignorando mensaje`
+        `⏳ Usuario ${from} está en proceso de conexión, ignorando mensaje`,
       );
       return res.sendStatus(200);
     }
@@ -100,12 +110,14 @@ app.post("/webhook", async (req, res) => {
     if (text === "menu" || text === "menú") {
       sessions[from].step = "menu";
       sessions[from].state = STATES.BOT;
+      console.log(`🔄 Sesión reiniciada para ${from}`);
     }
 
     let messagePayload = null;
 
-    // FLUJO DEL BOT
+    // FLUJO DEL BOT - MENÚ PRINCIPAL
     if (sessions[from].step === "menu") {
+      console.log(`📋 Mostrando menú principal a ${from}`);
       messagePayload = {
         type: "quick_reply",
         msgid: "menu_principal",
@@ -119,9 +131,12 @@ app.post("/webhook", async (req, res) => {
         ],
       };
       sessions[from].step = "option";
-    } else if (sessions[from].step === "option") {
+    }
+    // FLUJO DEL BOT - OPCIONES
+    else if (sessions[from].step === "option") {
       if (text === "btn_soporte") {
         console.log(`🔄 Usuario ${from} solicita soporte...`);
+        sessions[from].state = STATES.CONNECTING;
 
         // ===== PASO 1: Guardar "soporte" en el chat =====
         try {
@@ -132,27 +147,25 @@ app.post("/webhook", async (req, res) => {
               text: "soporte",
               type: "incoming_message",
             },
-            { timeout: 5000 }
+            { timeout: 5000 },
           );
           console.log(`✅ Mensaje 'soporte' guardado en el chat`);
         } catch (e) {
           console.error("⚠️ Error guardando 'soporte' en chat:", e.message);
         }
 
-        // ===== PASO 2: Cambiar estado a CONNECTING =====
-        sessions[from].state = STATES.CONNECTING;
-
-        // ===== PASO 3: Aviso de conexión en progreso =====
+        // ===== PASO 2: Aviso de conexión en progreso =====
         messagePayload = {
           type: "text",
           text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
         };
 
         await sendGupshupMessage(from, messagePayload);
+        console.log(`📤 Mensaje de conexión enviado a ${from}`);
 
-        // ===== PASO 4: Intentar conexión al webhook externo =====
+        // ===== PASO 3: Intentar conexión al webhook externo =====
         console.log(
-          `--- Intentando conectar ${from} con soporte (10s timeout) ---`
+          `--- Intentando conectar ${from} con soporte (10s timeout) ---`,
         );
 
         try {
@@ -166,21 +179,22 @@ app.post("/webhook", async (req, res) => {
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
             },
-            { timeout: 10000 }
+            { timeout: 10000 },
           );
 
           console.log(`✅ Agente conectado para ${from}`);
 
-          // ===== PASO 5: Éxito - Aviso de conexión exitosa =====
+          // ===== PASO 4: Éxito - Aviso de conexión exitosa =====
           sessions[from].state = STATES.WITH_AGENT;
-          messagePayload = {
+          const successPayload = {
             type: "text",
             text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n_Ahora estás en chat directo con nuestro equipo de soporte._",
           };
 
-          await sendGupshupMessage(from, messagePayload);
+          await sendGupshupMessage(from, successPayload);
+          console.log(`✅ Mensaje de éxito enviado a ${from}`);
         } catch (error) {
-          // ===== PASO 5: Error - Aviso de falla de conexión =====
+          // ===== PASO 4: Error - Aviso de falla de conexión =====
           const errorType =
             error.code === "ECONNABORTED" ? "Timeout (>10s)" : error.message;
           console.log(`❌ Soporte no disponible para ${from}: ${errorType}`);
@@ -189,33 +203,46 @@ app.post("/webhook", async (req, res) => {
           sessions[from].state = STATES.BOT;
           sessions[from].step = "menu";
 
-          messagePayload = {
+          const failurePayload = {
             type: "text",
             text: "🛠️ *Soporte Técnico*\n\n❌ Lo sentimos, en este momento no hay agentes disponibles.\n\n💡 Escribe *menu* para intentar más tarde o elige otra opción.",
           };
 
-          await sendGupshupMessage(from, messagePayload);
+          await sendGupshupMessage(from, failurePayload);
+          console.log(`❌ Mensaje de error enviado a ${from}`);
         }
 
-        // Retornar aquí porque ya enviamos los mensajes
+        // ✅ RETORNAR AQUÍ para evitar el envío duplicado
         return res.sendStatus(200);
       } else if (text === "btn_ventas") {
+        console.log(`💰 Usuario ${from} solicita información de ventas`);
         messagePayload = {
           type: "text",
           text: "💰 *Ventas*\n\nVisita nuestra web: https://tuapp.com/ventas\n\nEscribe *menu* para volver.",
         };
         sessions[from].step = "menu";
+      } else {
+        // Si el usuario escribe algo que no es una opción válida
+        console.log(`⚠️ Entrada inválida de ${from}: "${text}"`);
+        messagePayload = {
+          type: "text",
+          text: "❌ No entendí tu respuesta.\n\nEscribe *menu* para ver las opciones disponibles.",
+        };
       }
     }
 
-    // Enviar respuesta final si existe un payload
+    // ✅ Enviar respuesta final si existe un payload
     if (messagePayload) {
+      console.log(
+        `📨 Enviando payload a ${from}:`,
+        JSON.stringify(messagePayload),
+      );
       await sendGupshupMessage(from, messagePayload);
     }
 
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ Error Webhook:", err.message);
+    console.error("❌ Error en Webhook:", err.message);
     res.sendStatus(200);
   }
 });
