@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const FormData = require("form-data");
 
 const app = express();
 app.use(express.json());
@@ -45,6 +46,37 @@ async function sendGupshupMessage(destination, payload) {
   }
 }
 
+// Helper para descargar medios desde Gupshup
+async function downloadMediaFromGupshup(mediaId, from) {
+  try {
+    const response = await axios.get(
+      `https://api.gupshup.io/wa/api/v1/media/${mediaId}`,
+      {
+        headers: {
+          apikey: process.env.GUPSHUP_API_KEY,
+        },
+        responseType: "arraybuffer",
+      },
+    );
+
+    // Determinar tipo de archivo según la respuesta
+    const contentType = response.headers["content-type"];
+    const buffer = Buffer.from(response.data);
+
+    return {
+      buffer: buffer,
+      contentType: contentType,
+      size: buffer.length,
+    };
+  } catch (error) {
+    console.error(
+      `❌ Error descargando media ${mediaId} de ${from}:`,
+      error.message,
+    );
+    throw error;
+  }
+}
+
 app.post("/webhook", async (req, res) => {
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -55,24 +87,83 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from;
     let text = "";
+    let mediaInfo = null;
+    let messageType = "text";
 
-    // Extraer texto o ID de botones
-    if (message.text && message.text.body) {
-      text = message.text.body.toLowerCase().trim();
-    } else if (message.type === "interactive") {
-      const interactive = message.interactive;
-      const reply = interactive.button_reply || interactive.list_reply;
-      if (reply) {
-        try {
-          const replyData = JSON.parse(reply.id);
-          text = replyData.postbackText;
-        } catch (e) {
-          text = reply.id;
+    // Detectar tipo de mensaje y extraer contenido
+    switch (message.type) {
+      case "text":
+        text = message.text.body.toLowerCase().trim();
+        messageType = "text";
+        console.log(`📨 Mensaje de texto recibido de ${from}: "${text}"`);
+        break;
+
+      case "image":
+        messageType = "image";
+        mediaInfo = {
+          id: message.image.id,
+          caption: message.image.caption || "",
+          mime_type: message.image.mime_type || "image/jpeg",
+        };
+        console.log(`🖼️ Imagen recibida de ${from}, ID: ${mediaInfo.id}`);
+        text = mediaInfo.caption.toLowerCase().trim();
+        break;
+
+      case "video":
+        messageType = "video";
+        mediaInfo = {
+          id: message.video.id,
+          caption: message.video.caption || "",
+          mime_type: message.video.mime_type || "video/mp4",
+        };
+        console.log(`🎥 Video recibido de ${from}, ID: ${mediaInfo.id}`);
+        text = mediaInfo.caption.toLowerCase().trim();
+        break;
+
+      case "audio":
+        messageType = "audio";
+        mediaInfo = {
+          id: message.audio.id,
+          mime_type: message.audio.mime_type || "audio/ogg",
+        };
+        console.log(`🎵 Audio recibido de ${from}, ID: ${mediaInfo.id}`);
+        break;
+
+      case "document":
+        messageType = "document";
+        mediaInfo = {
+          id: message.document.id,
+          filename: message.document.filename || "document",
+          mime_type: message.document.mime_type || "application/octet-stream",
+          caption: message.document.caption || "",
+        };
+        console.log(
+          `📄 Documento recibido de ${from}, ID: ${mediaInfo.id}, Nombre: ${mediaInfo.filename}`,
+        );
+        text = mediaInfo.caption.toLowerCase().trim();
+        break;
+
+      case "interactive":
+        const interactive = message.interactive;
+        const reply = interactive.button_reply || interactive.list_reply;
+        if (reply) {
+          try {
+            const replyData = JSON.parse(reply.id);
+            text = replyData.postbackText;
+          } catch (e) {
+            text = reply.id;
+          }
         }
-      }
-    }
+        messageType = "interactive";
+        console.log(`🔘 Interactivo recibido de ${from}: "${text}"`);
+        break;
 
-    console.log(`📨 Mensaje recibido de ${from}: "${text}"`);
+      default:
+        console.log(
+          `❓ Tipo de mensaje no manejado de ${from}: ${message.type}`,
+        );
+        return res.sendStatus(200);
+    }
 
     // Inicializar sesión
     if (!sessions[from]) {
@@ -80,18 +171,50 @@ app.post("/webhook", async (req, res) => {
       console.log(`👤 Nueva sesión creada para ${from}`);
     }
 
-    // Si ya está con un agente, reenviar mensaje a la plataforma externa
+    // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
       console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
+
+      let payloadToSupport = {
+        from,
+        text: text || "",
+        type: "incoming_message",
+        message_type: messageType,
+        timestamp: new Date().toISOString(),
+        object: "whatsapp_business_account",
+      };
+
+      // Si hay medios, descargarlos y enviarlos
+      if (mediaInfo) {
+        try {
+          console.log(`⬇️ Descargando media de ${from}...`);
+          const mediaData = await downloadMediaFromGupshup(mediaInfo.id, from);
+
+          payloadToSupport.media = {
+            ...mediaInfo,
+            buffer: mediaData.buffer.toString("base64"), // Convertir a base64 para enviar
+            content_type: mediaData.contentType,
+            size: mediaData.size,
+          };
+
+          console.log(
+            `✅ Media descargado de ${from}: ${mediaData.size} bytes, tipo: ${mediaData.contentType}`,
+          );
+        } catch (mediaError) {
+          console.error(
+            `❌ Error procesando media de ${from}:`,
+            mediaError.message,
+          );
+          // Aún así enviamos el mensaje pero sin el archivo
+          payloadToSupport.media_error = mediaError.message;
+        }
+      }
+
       try {
         await axios.post(
           "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
-          {
-            from,
-            text,
-            type: "incoming_message",
-            object: "whatsapp_business_account",
-          },
+          payloadToSupport,
+          { timeout: 10000 },
         );
       } catch (e) {
         console.error("❌ Error reenviando al soporte:", e.message);
@@ -104,6 +227,16 @@ app.post("/webhook", async (req, res) => {
       console.log(
         `⏳ Usuario ${from} está en proceso de conexión, ignorando mensaje`,
       );
+
+      // Si el usuario envía un archivo mientras está conectando, notificarle
+      if (messageType !== "text") {
+        const connectingPayload = {
+          type: "text",
+          text: "⏳ *Espera un momento*\n\nEstamos conectándote con un agente. Por favor espera a que se complete la conexión antes de enviar archivos.",
+        };
+        await sendGupshupMessage(from, connectingPayload);
+      }
+
       return res.sendStatus(200);
     }
 
@@ -118,6 +251,36 @@ app.post("/webhook", async (req, res) => {
 
     // FLUJO DEL BOT - MENÚ PRINCIPAL
     if (sessions[from].step === "menu") {
+      // Si el usuario envía un archivo en el menú principal
+      if (messageType !== "text" && messageType !== "interactive") {
+        console.log(
+          `⚠️ Usuario ${from} envió ${messageType} en el menú principal`,
+        );
+        messagePayload = {
+          type: "text",
+          text: `📎 *Archivo recibido*\n\nPara enviar archivos necesitas estar conectado con un agente.\n\nSelecciona *"🛠️ Soporte"* para hablar con un agente y luego podrás enviar imágenes, videos, audios y documentos.`,
+        };
+
+        // Mostrar el menú después del mensaje
+        const menuPayload = {
+          type: "quick_reply",
+          msgid: "menu_principal",
+          content: {
+            type: "text",
+            text: "👋 ¡Bienvenido!\n\n¿En qué podemos ayudarte hoy?",
+          },
+          options: [
+            { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
+            { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
+          ],
+        };
+
+        await sendGupshupMessage(from, messagePayload);
+        await new Promise((resolve) => setTimeout(resolve, 500)); // Pequeña pausa
+        await sendGupshupMessage(from, menuPayload);
+        return res.sendStatus(200);
+      }
+
       console.log(`📋 Mostrando menú principal a ${from}`);
       messagePayload = {
         type: "quick_reply",
@@ -135,6 +298,20 @@ app.post("/webhook", async (req, res) => {
     }
     // FLUJO DEL BOT - OPCIONES
     else if (sessions[from].step === "option") {
+      // Si el usuario envía un archivo en lugar de seleccionar una opción
+      if (messageType !== "text" && messageType !== "interactive") {
+        console.log(
+          `⚠️ Usuario ${from} envió ${messageType} en lugar de seleccionar opción`,
+        );
+        messagePayload = {
+          type: "text",
+          text: `📎 *Archivo recibido*\n\nPor favor selecciona una opción del menú primero.\n\nEnvía *menu* para volver al menú principal.`,
+        };
+
+        await sendGupshupMessage(from, messagePayload);
+        return res.sendStatus(200);
+      }
+
       if (text === "btn_soporte") {
         console.log(`🔄 Usuario ${from} solicita soporte...`);
         sessions[from].state = STATES.CONNECTING;
@@ -186,11 +363,11 @@ app.post("/webhook", async (req, res) => {
 
           console.log(`✅ Agente conectado para ${from}`);
 
-          // ===== PASO 4: Éxito - Aviso de conexión exitosa =====
+          // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
           const successPayload = {
             type: "text",
-            text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n_Ahora estás en chat directo con nuestro equipo de soporte._",
+            text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
           };
 
           await sendGupshupMessage(from, successPayload);
@@ -247,6 +424,12 @@ app.post("/webhook", async (req, res) => {
     console.error("❌ Error en Webhook:", err.message);
     res.sendStatus(200);
   }
+});
+
+// Endpoint para recibir confirmaciones de entrega/lectura (opcional)
+app.post("/webhook/status", (req, res) => {
+  console.log("📊 Status update:", JSON.stringify(req.body, null, 2));
+  res.sendStatus(200);
 });
 
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
