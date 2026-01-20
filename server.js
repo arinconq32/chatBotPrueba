@@ -90,6 +90,7 @@ app.post("/webhook", async (req, res) => {
             from,
             text,
             type: "incoming_message",
+            object: "whatsapp_business_account",
           },
         );
       } catch (e) {
@@ -146,6 +147,7 @@ app.post("/webhook", async (req, res) => {
               from: from,
               text: "soporte",
               type: "incoming_message",
+              object: "whatsapp_business_account",
             },
             { timeout: 5000 },
           );
