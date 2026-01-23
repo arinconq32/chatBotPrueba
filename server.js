@@ -325,6 +325,8 @@ app.post("/webhook", async (req, res) => {
               text: "soporte",
               type: "incoming_message",
               object: "whatsapp_business_account",
+              cola: "PRUEBAS",
+              pausa: 1,
             },
             { timeout: 5000 },
           );
