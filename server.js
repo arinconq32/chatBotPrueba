@@ -251,6 +251,26 @@ app.post("/webhook", async (req, res) => {
 
     // FLUJO DEL BOT - MENÚ PRINCIPAL
     if (sessions[from].step === "menu") {
+      if (!sessions[from].colaEnviada) {
+        try {
+          await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "__session_init__", // Mensaje especial que no se muestra
+              type: "session_config",
+              cola: "PRUEBAS",
+              pausa: 1,
+              timestamp: new Date().toISOString(),
+            },
+            { timeout: 5000 },
+          );
+          sessions[from].colaEnviada = true; // Marcar como enviado
+          console.log(`✅ Configuración de sesión enviada para ${from}`);
+        } catch (e) {
+          console.error("⚠️ Error enviando config de sesión:", e.message);
+        }
+      }
       // Si el usuario envía un archivo en el menú principal
       if (messageType !== "text" && messageType !== "interactive") {
         console.log(
