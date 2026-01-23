@@ -251,26 +251,6 @@ app.post("/webhook", async (req, res) => {
 
     // FLUJO DEL BOT - MENÚ PRINCIPAL
     if (sessions[from].step === "menu") {
-      if (!sessions[from].colaEnviada) {
-        try {
-          await axios.post(
-            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
-            {
-              from: from,
-              text: "__session_init__", // Mensaje especial que no se muestra
-              type: "session_config",
-              cola: "PRUEBAS",
-              pausa: 1,
-              timestamp: new Date().toISOString(),
-            },
-            { timeout: 5000 },
-          );
-          sessions[from].colaEnviada = true; // Marcar como enviado
-          console.log(`✅ Configuración de sesión enviada para ${from}`);
-        } catch (e) {
-          console.error("⚠️ Error enviando config de sesión:", e.message);
-        }
-      }
       // Si el usuario envía un archivo en el menú principal
       if (messageType !== "text" && messageType !== "interactive") {
         console.log(
@@ -424,6 +404,76 @@ app.post("/webhook", async (req, res) => {
           text: "💰 *Ventas*\n\nVisita nuestra web: https://tuapp.com/ventas\n\nEscribe *menu* para volver.",
         };
         sessions[from].step = "menu";
+      } else if (text === "soporte") {
+        console.log(`🔄 Usuario ${from} escribió "soporte" como texto...`);
+        sessions[from].state = STATES.CONNECTING;
+
+        // ===== ENVIAR CON COLA Y PAUSA =====
+        try {
+          await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "soporte",
+              type: "incoming_message",
+              object: "whatsapp_business_account",
+              cola: "PRUEBAS",
+              pausa: 1,
+            },
+            { timeout: 5000 },
+          );
+          console.log(`✅ Texto 'soporte' con cola/pausa enviado al chat`);
+        } catch (e) {
+          console.error("⚠️ Error enviando 'soporte':", e.message);
+        }
+
+        messagePayload = {
+          type: "text",
+          text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
+        };
+
+        await sendGupshupMessage(from, messagePayload);
+
+        // Intentar conexión completa
+        try {
+          const response = await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "soporte",
+              type: "incoming_message",
+              event: "support_requested",
+              object: "whatsapp_business_account",
+              timestamp: new Date().toISOString(),
+              cola: "PRUEBAS",
+              pausa: 1,
+            },
+            { timeout: 10000 },
+          );
+
+          console.log(`✅ Agente conectado para ${from} (vía texto)`);
+          sessions[from].state = STATES.WITH_AGENT;
+
+          const successPayload = {
+            type: "text",
+            text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
+          };
+
+          await sendGupshupMessage(from, successPayload);
+        } catch (error) {
+          console.log(`❌ Soporte no disponible: ${error.message}`);
+          sessions[from].state = STATES.BOT;
+          sessions[from].step = "menu";
+
+          const failurePayload = {
+            type: "text",
+            text: "🛠️ *Soporte Técnico*\n\n❌ Lo sentimos, no hay agentes disponibles.\n\n💡 Escribe *menu* para intentar más tarde.",
+          };
+
+          await sendGupshupMessage(from, failurePayload);
+        }
+
+        return res.sendStatus(200);
       } else {
         // Si el usuario escribe algo que no es una opción válida
         console.log(`⚠️ Entrada inválida de ${from}: "${text}"`);
