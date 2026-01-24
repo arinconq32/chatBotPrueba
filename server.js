@@ -15,7 +15,23 @@ const STATES = {
 };
 
 const sessions = {};
+const availableNumbers = [];
 
+// Función helper para extraer número de un texto con el patrón
+function extractNumberFromMessage(text) {
+  // Patrón: "disponible - extension - [numero]"
+  const regex = /disponible\s*-\s*extension\s*-\s*\[([0-9]+)\]/i;
+  const match = text.match(regex);
+  if (match && match[1]) {
+    return match[1]; // devuelve solo el número
+  }
+  return null;
+}
+
+// Función para obtener el siguiente número disponible
+function getNextAvailableNumber() {
+  return availableNumbers.shift(); // toma el primer número y lo elimina del array
+}
 // Helper para enviar mensajes a Gupshup
 async function sendGupshupMessage(destination, payload) {
   const params = new URLSearchParams({
@@ -96,6 +112,32 @@ app.post("/webhook", async (req, res) => {
         text = message.text.body.toLowerCase().trim();
         messageType = "text";
         console.log(`📨 Mensaje de texto recibido de ${from}: "${text}"`);
+        // --- CAPTURAR números enviados por agentes ---
+        const extractedNumber = extractNumberFromMessage(text);
+        if (extractedNumber) {
+          console.log(`✅ Número capturado: ${extractedNumber}`);
+          availableNumbers.push(extractedNumber); // availableNumbers debe estar declarado fuera de la función
+        }
+
+        // --- ENTREGAR NÚMERO AL USUARIO ---
+        if (text === "dar número") {
+          const numberToSend = getNextAvailableNumber(); // tu función para tomar el siguiente número
+          let payload;
+          if (numberToSend) {
+            payload = {
+              type: "text",
+              text: `📱 Número asignado: ${numberToSend}`,
+            };
+          } else {
+            payload = {
+              type: "text",
+              text: "⚠️ No hay números disponibles en este momento.",
+            };
+          }
+          await sendGupshupMessage(from, payload);
+          return res.sendStatus(200); // importante, para que no siga procesando el mensaje
+        }
+
         break;
 
       case "image":
