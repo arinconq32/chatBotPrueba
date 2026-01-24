@@ -7,6 +7,12 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+function extractNumberFromMessage(text) {
+  // Captura el último bloque de dígitos que venga después de un guion
+  const match = text.match(/-\s*(\d+)\s*$/);
+  return match ? match[1] : null;
+}
+
 // Estados de la conversación
 const STATES = {
   BOT: "bot",
@@ -16,17 +22,6 @@ const STATES = {
 
 const sessions = {};
 const availableNumbers = [];
-
-// Función helper para extraer número de un texto con el patrón
-function extractNumberFromMessage(text) {
-  // Patrón: "disponible - extension - [numero]"
-  const regex = /disponible\s*-\s*extension\s*-\s*\[([0-9]+)\]/i;
-  const match = text.match(regex);
-  if (match && match[1]) {
-    return match[1]; // devuelve solo el número
-  }
-  return null;
-}
 
 // Función para obtener el siguiente número disponible
 function getNextAvailableNumber() {
