@@ -89,6 +89,23 @@ async function downloadMediaFromGupshup(mediaId, from) {
 }
 
 app.post("/webhook", async (req, res) => {
+  const data = req.body;
+
+  // ✅ Detectar cuando llega la asignación del agente
+  if (data.type === "agent_assigned") {
+    console.log(`🎯 Agente asignado: ${data.numeroAgente} para ${data.from}`);
+
+    // Guardar el número del agente disponible
+    availableNumbers.push(data.numeroAgente);
+
+    // O enviarlo directamente al usuario
+    await sendGupshupMessage(data.from, {
+      type: "text",
+      text: `✅ Agente conectado. Tu número asignado es: ${data.numeroAgente}`,
+    });
+
+    return res.sendStatus(200);
+  }
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
