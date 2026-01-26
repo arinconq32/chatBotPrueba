@@ -19,7 +19,7 @@ const STATES = {
   CONNECTING: "connecting",
   WITH_AGENT: "with_agent",
 };
-
+const agentAssignments = new Map();
 const sessions = {};
 const availableNumbers = [];
 
@@ -93,19 +93,59 @@ app.post("/webhook", async (req, res) => {
 
   // ✅ Detectar cuando llega la asignación del agente
   if (data.type === "agent_assigned") {
-    console.log(`🎯 Agente asignado: ${data.numeroAgente} para ${data.from}`);
+    console.log(`🎯 Asignación recibida:`);
+    console.log(`   Cliente: ${data.numeroCliente}`);
+    console.log(`   Agente: ${data.numeroAgente} (ID: ${data.agenteId})`);
 
-    // Guardar el número del agente disponible
-    availableNumbers.push(data.numeroAgente);
+    // 🔥 CRÍTICO: Guardar la asignación
+    agentAssignments.set(data.numeroCliente, data.numeroAgente);
 
-    // O enviarlo directamente al usuario
-    await sendGupshupMessage(data.from, {
-      type: "text",
-      text: `✅ Agente conectado. Tu número asignado es: ${data.numeroAgente}`,
-    });
+    console.log(`✅ Asignación guardada en memoria`);
+    console.log(`📊 Total asignaciones activas: ${agentAssignments.size}`);
+
+    try {
+      await sendGupshupMessage(data.numeroCliente, {
+        type: "text",
+        text: `✅ Agente ${data.numeroAgente} conectado.\n\nPuedes escribir tus consultas ahora.`,
+      });
+      console.log(`✅ Notificación enviada al cliente ${data.numeroCliente}`);
+    } catch (error) {
+      console.error(`❌ Error notificando al cliente:`, error.message);
+    }
 
     return res.sendStatus(200);
   }
+
+  // ✅ Capturar liberación
+  if (data.type === "agent_released") {
+    console.log(`🔓 Liberación recibida:`);
+    console.log(`   Cliente: ${data.numeroCliente}`);
+    console.log(`   Agente: ${data.numeroAgente}`);
+
+    agentAssignments.delete(data.numeroCliente);
+
+    console.log(`✅ Asignación eliminada`);
+    console.log(`📊 Total asignaciones activas: ${agentAssignments.size}`);
+
+    // Resetear sesión
+    if (sessions[data.numeroCliente]) {
+      sessions[data.numeroCliente] = { step: "menu", state: STATES.BOT };
+      console.log(`🔄 Sesión del cliente reseteada`);
+    }
+
+    // Notificar al cliente que la conversación terminó
+    try {
+      await sendGupshupMessage(data.numeroCliente, {
+        type: "text",
+        text: "✅ Conversación finalizada.\n\nEscribe *menu* si necesitas más ayuda.",
+      });
+    } catch (error) {
+      console.error(`❌ Error notificando fin de conversación:`, error.message);
+    }
+
+    return res.sendStatus(200);
+  }
+
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
@@ -227,10 +267,12 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
+      const assignedAgent = agentAssignments.get(from);
       console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
 
       let payloadToSupport = {
         from,
+        to: assignedAgent,
         text: text || "",
         type: "incoming_message",
         message_type: messageType,
