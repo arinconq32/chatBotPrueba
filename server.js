@@ -12,7 +12,7 @@ function extractNumberFromMessage(text) {
   const match = text.match(/-\s*(\d+)\s*$/);
   return match ? match[1] : null;
 }
-const agentAssignments = new Map();
+
 // Estados de la conversación
 const STATES = {
   BOT: "bot",
@@ -93,38 +93,10 @@ app.post("/webhook", async (req, res) => {
 
   // ✅ Detectar cuando llega la asignación del agente
   if (data.type === "agent_assigned") {
-    console.log(`\n${"=".repeat(60)}`);
-    console.log(`🎯 ASIGNACIÓN RECIBIDA EN BOT`);
-    console.log(`${"=".repeat(60)}`);
-    console.log(`   Cliente: ${data.numeroCliente}`);
-    console.log(`   Agente: ${data.numeroAgente} (ID: ${data.agenteId})`);
-    agentAssignments.set(data.numeroCliente, data.numeroAgente);
-
-    console.log(`\n✅ Asignación guardada en memoria del bot`);
-    console.log(`📊 Estado actual del bot:`);
-    console.log(`   Total asignaciones: ${agentAssignments.size}`);
-
-    // Mostrar todas las asignaciones
-    console.log(`\n📋 Asignaciones activas en bot:`);
-    agentAssignments.forEach((agente, cliente) => {
-      console.log(`   ${cliente} ➜ Agente ${agente}`);
-    });
+    console.log(`🎯 Agente asignado: ${data.numeroAgente} para ${data.from}`);
 
     // Guardar el número del agente disponible
     availableNumbers.push(data.numeroAgente);
-    try {
-      const mensajePersonalizado = {
-        type: "text",
-        text: `✅ *Conexión Exitosa*\n\n🎧 Agente ${data.numeroAgente} te atenderá.\n\n💬 Puedes escribir tu consulta ahora o enviar archivos multimedia.`,
-      };
-
-      await sendGupshupMessage(data.numeroCliente, mensajePersonalizado);
-
-      console.log(`✅ Mensaje de bienvenida enviado a ${data.numeroCliente}`);
-      console.log(`${"=".repeat(60)}\n`);
-    } catch (error) {
-      console.error(`❌ Error enviando mensaje de bienvenida:`, error.message);
-    }
 
     // O enviarlo directamente al usuario
     await sendGupshupMessage(data.from, {
@@ -134,50 +106,6 @@ app.post("/webhook", async (req, res) => {
 
     return res.sendStatus(200);
   }
-  // ✅ Capturar liberación
-  if (data.type === "agent_released") {
-    console.log(`\n${"=".repeat(60)}`);
-    console.log(`🔓 LIBERACIÓN RECIBIDA EN BOT`);
-    console.log(`${"=".repeat(60)}`);
-    console.log(`   Cliente: ${data.numeroCliente}`);
-    console.log(`   Agente: ${data.numeroAgente}`);
-
-    agentAssignments.delete(data.numeroCliente);
-    console.log(`\n✅ Asignación eliminada`);
-    console.log(`📊 Estado actual del bot:`);
-    console.log(`   Total asignaciones: ${agentAssignments.size}`);
-
-    // Mostrar asignaciones restantes
-    if (agentAssignments.size > 0) {
-      console.log(`\n📋 Asignaciones restantes:`);
-      agentAssignments.forEach((agente, cliente) => {
-        console.log(`   ${cliente} ➜ Agente ${agente}`);
-      });
-    } else {
-      console.log(`\n📋 No hay asignaciones activas`);
-    }
-
-    // Resetear sesión
-    if (sessions[data.numeroCliente]) {
-      sessions[data.numeroCliente] = { step: "menu", state: STATES.BOT };
-    }
-
-    try {
-      await sendGupshupMessage(data.numeroCliente, {
-        type: "text",
-        text: "✅ *Conversación Finalizada*\n\nGracias por contactarnos.\n\nEscribe *menu* si necesitas más ayuda.",
-      });
-
-      console.log(`✅ Mensaje de despedida enviado a ${data.numeroCliente}`);
-    } catch (error) {
-      console.error(`❌ Error enviando mensaje de despedida:`, error.message);
-    }
-
-    console.log(`${"=".repeat(60)}\n`);
-
-    return res.sendStatus(200);
-  }
-
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
@@ -299,12 +227,10 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
-      const assignedAgent = agentAssignments.get(from);
       console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
 
       let payloadToSupport = {
         from,
-        to: assignedAgent,
         text: text || "",
         type: "incoming_message",
         message_type: messageType,
@@ -632,42 +558,6 @@ app.post("/webhook", async (req, res) => {
 app.post("/webhook/status", (req, res) => {
   console.log("📊 Status update:", JSON.stringify(req.body, null, 2));
   res.sendStatus(200);
-});
-
-// En bot.js
-app.get("/debug/assignments", (req, res) => {
-  console.log(`\n${"=".repeat(60)}`);
-  console.log(`📊 DEBUG - ESTADO DEL BOT`);
-  console.log(`${"=".repeat(60)}`);
-  console.log(`Timestamp: ${new Date().toISOString()}`);
-  console.log(`\nRESUMEN:`);
-  console.log(`  • Asignaciones: ${agentAssignments.size}`);
-  console.log(`  • Sesiones: ${Object.keys(sessions).length}`);
-
-  if (agentAssignments.size > 0) {
-    console.log(`\nASIGNACIONES:`);
-    agentAssignments.forEach((agente, cliente) => {
-      console.log(`  • ${cliente} ➜ Agente ${agente}`);
-    });
-  }
-
-  console.log(`${"=".repeat(60)}\n`);
-
-  res.json({
-    timestamp: new Date().toISOString(),
-    totalAsignaciones: agentAssignments.size,
-    asignaciones: Array.from(agentAssignments.entries()).map(
-      ([cliente, agente]) => ({
-        cliente,
-        agente,
-      }),
-    ),
-    sesiones: Object.entries(sessions).map(([num, data]) => ({
-      numero: num,
-      estado: data.state,
-      paso: data.step,
-    })),
-  });
 });
 
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
