@@ -99,10 +99,10 @@ app.post("/webhook", async (req, res) => {
     availableNumbers.push(data.numeroAgente);
 
     // O enviarlo directamente al usuario
-    await sendGupshupMessage(data.from, {
+    /* await sendGupshupMessage(data.from, {
       type: "text",
       text: `✅ Agente conectado. Tu número asignado es: ${data.numeroAgente}`,
-    });
+    });*/
 
     return res.sendStatus(200);
   }
