@@ -12,7 +12,7 @@ function extractNumberFromMessage(text) {
   const match = text.match(/-\s*(\d+)\s*$/);
   return match ? match[1] : null;
 }
-
+const agentAssignments = new Map();
 // Estados de la conversación
 const STATES = {
   BOT: "bot",
@@ -94,7 +94,7 @@ app.post("/webhook", async (req, res) => {
   // ✅ Detectar cuando llega la asignación del agente
   if (data.type === "agent_assigned") {
     console.log(`🎯 Agente asignado: ${data.numeroAgente} para ${data.from}`);
-
+    agentAssignments.set(data.numeroCliente, data.numeroAgente);
     // Guardar el número del agente disponible
     availableNumbers.push(data.numeroAgente);
 
@@ -106,6 +106,19 @@ app.post("/webhook", async (req, res) => {
 
     return res.sendStatus(200);
   }
+  // ✅ Capturar liberación
+  if (data.type === "agent_released") {
+    console.log(`🔓 Liberación: ${data.numeroCliente} de ${data.numeroAgente}`);
+    agentAssignments.delete(data.numeroCliente);
+
+    // Resetear sesión
+    if (sessions[data.numeroCliente]) {
+      sessions[data.numeroCliente] = { step: "menu", state: STATES.BOT };
+    }
+
+    return res.sendStatus(200);
+  }
+
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
@@ -227,10 +240,12 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
+      const assignedAgent = agentAssignments.get(from);
       console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
 
       let payloadToSupport = {
         from,
+        to: assignedAgent,
         text: text || "",
         type: "incoming_message",
         message_type: messageType,
