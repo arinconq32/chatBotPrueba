@@ -113,6 +113,14 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    if (data.type === "agent_assigned") {
+      console.log(
+        `🎯 Agente asignado (legacy): ${data.numeroAgente} para ${data.from}`,
+      );
+      availableNumbers.push(data.numeroAgente);
+      return res.sendStatus(200);
+    }
+
     const from = message.from;
     let text = "";
     let mediaInfo = null;
