@@ -251,7 +251,7 @@ app.post("/webhook", async (req, res) => {
         },
       });
 
-      return res.sendStatus(200);
+      // return res.sendStatus(200);
 
       let payloadToSupport = {
         from,
@@ -447,7 +447,7 @@ app.post("/webhook", async (req, res) => {
 
           // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
-          sessions[from].numeroAgente = numero;
+          // sessions[from].numeroAgente = numero;
           const successPayload = {
             type: "text",
             text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
