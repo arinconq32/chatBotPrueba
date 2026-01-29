@@ -83,19 +83,6 @@ async function downloadMediaFromGupshup(mediaId, from) {
   }
 }
 
-// Función para enviar mensaje de agente disponible solo a una sala específica
-async function notifyAgentAvailableToRoom(numeroAgente, from, io) {
-  const idSala = `${numeroAgente}-${from}`;
-
-  console.log(`📢 Notificando disponibilidad de agente a sala: ${idSala}`);
-
-  io.to(idSala).emit("agent_available", {
-    numeroAgente: numeroAgente,
-    convId: from,
-    timestamp: Date.now(),
-  });
-}
-
 app.post("/webhook", async (req, res) => {
   const data = req.body;
 
@@ -195,25 +182,9 @@ app.post("/webhook", async (req, res) => {
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
       const numeroAgente = sessions[from].numeroAgente;
-      const idSala = `${numeroAgente}-${from}`;
       console.log(
         `📤 Reenviando mensaje de ${from} al agente ${numeroAgente}...`,
       );
-
-      // Enviar via Socket.io si está disponible
-      if (global.io) {
-        global.io.to(idSala).emit("chat_message", {
-          convId: from,
-          msg: {
-            id: Date.now(),
-            emisor: "contacto",
-            mensaje: text || "",
-            tipo: messageType,
-            timestamp: Date.now(),
-            origen: "whatsapp",
-          },
-        });
-      }
 
       // Preparar payload para enviar al webhook externo
       let payloadToSupport = {
@@ -453,11 +424,6 @@ app.post("/webhook", async (req, res) => {
           sessions[from].state = STATES.WITH_AGENT;
           sessions[from].numeroAgente = numeroAgente;
 
-          // ✅ Notificar disponibilidad solo a la sala específica
-          if (global.io) {
-            notifyAgentAvailableToRoom(numeroAgente, from, global.io);
-          }
-
           const successPayload = {
             type: "text",
             text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
@@ -557,38 +523,10 @@ app.get("/stats", (req, res) => {
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () =>
-  console.log(`🚀 Servidor en puerto ${PORT}`),
-);
-
-// Configurar Socket.io si es necesario
-const http = require("http");
-const socketIo = require("socket.io");
-
-const httpServer = http.createServer(app);
-const io = socketIo(httpServer, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
-});
-
-global.io = io;
-
-io.on("connection", (socket) => {
-  console.log(`🔌 Cliente conectado: ${socket.id}`);
-
-  socket.on("join_room", ({ numeroAgente, convId }) => {
-    const idSala = `${numeroAgente}-${convId}`;
-    socket.join(idSala);
-    console.log(`✅ Socket ${socket.id} unido a sala: ${idSala}`);
-  });
-
-  socket.on("disconnect", () => {
-    console.log(`🔌 Cliente desconectado: ${socket.id}`);
-  });
-});
-
-httpServer.listen(PORT + 1, () => {
-  console.log(`🔌 Socket.io escuchando en puerto ${PORT + 1}`);
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor en puerto ${PORT}`);
+  console.log(`📊 Estadísticas: http://localhost:${PORT}/stats`);
+  console.log(
+    `⚡ Capacidad máxima: ${MAX_CONCURRENT_CLIENTS} clientes concurrentes`,
+  );
 });
