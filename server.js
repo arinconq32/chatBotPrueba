@@ -154,7 +154,7 @@ app.post("/webhook", async (req, res) => {
               text: "⚠️ No hay números disponibles en este momento.",
             };
           }
-          await sendGupshupMessage(from, payload);
+          // await sendGupshupMessage(from, payload);
           return res.sendStatus(200); // importante, para que no siga procesando el mensaje
         }
 
@@ -235,7 +235,23 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
+      const numeroAgente = sessions[from].numeroAgente;
+      const idSala = `${numeroAgente}-${from}`;
       console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
+
+      io.to(idSala).emit("chat_message", {
+        convId: from,
+        msg: {
+          id: Date.now(),
+          emisor: "contacto",
+          mensaje: text || "",
+          tipo: messageType,
+          timestamp: Date.now(),
+          origen: "whatsapp",
+        },
+      });
+
+      return res.sendStatus(200);
 
       let payloadToSupport = {
         from,
@@ -431,6 +447,7 @@ app.post("/webhook", async (req, res) => {
 
           // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
+          sessions[from].numeroAgente = numero;
           const successPayload = {
             type: "text",
             text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
@@ -515,6 +532,7 @@ app.post("/webhook", async (req, res) => {
 
           console.log(`✅ Agente conectado para ${from} (vía texto)`);
           sessions[from].state = STATES.WITH_AGENT;
+          sessions[from].numeroAgente = numero;
 
           const successPayload = {
             type: "text",
