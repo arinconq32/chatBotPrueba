@@ -156,8 +156,58 @@ io.on("connection", (socket) => {
   // Cuando un agente se une a una sala
   socket.on("join_room", (data) => {
     const { idSala, numeroAgente } = data;
+
+    // Verificar que la sala existe y está esperando al agente
+    if (!roomConnections[idSala]) {
+      console.error(`❌ Sala ${idSala} no existe o ya fue cerrada`);
+      socket.emit("error", { message: "Sala no encontrada" });
+      return;
+    }
+
+    // Verificar que el agente tiene capacidad
+    const connections = agentConnections[numeroAgente] || [];
+    if (connections.length >= MAX_CONNECTIONS_PER_AGENT) {
+      console.error(
+        `❌ Agente ${numeroAgente} alcanzó el límite de ${MAX_CONNECTIONS_PER_AGENT} conexiones`,
+      );
+      socket.emit("error", { message: "Límite de conexiones alcanzado" });
+      return;
+    }
+
+    // Marcar la sala como "conectada" (agente activo)
+    roomConnections[idSala].agenteConectado = true;
+    roomConnections[idSala].socketId = socket.id;
+
+    // Unir el socket del agente a la sala
     socket.join(idSala);
-    console.log(`🚪 Agente ${numeroAgente} se unió a sala ${idSala}`);
+    console.log(
+      `🚪 Agente ${numeroAgente} se unió a sala ${idSala} (${connections.length + 1}/${MAX_CONNECTIONS_PER_AGENT})`,
+    );
+
+    // Actualizar la sesión del cliente a WITH_AGENT
+    const { cliente } = roomConnections[idSala];
+    if (sessions[cliente]) {
+      sessions[cliente].state = STATES.WITH_AGENT;
+      console.log(
+        `✅ Cliente ${cliente} ahora puede comunicarse con agente en sala ${idSala}`,
+      );
+
+      // Notificar al cliente que el agente está listo
+      sendGupshupMessage(cliente, {
+        type: "text",
+        text: `🛠️ *Agente Conectado*\n\n✅ El agente #${numeroAgente} está ahora en línea y listo para ayudarte.\n\n📎 Puedes escribir tu mensaje o enviar archivos.`,
+      }).catch((err) =>
+        console.error(`❌ Error notificando conexión a cliente:`, err.message),
+      );
+    }
+
+    // Confirmar al agente que se unió exitosamente
+    socket.emit("room_joined", {
+      idSala: idSala,
+      cliente: cliente,
+      numeroAgente: numeroAgente,
+      message: "Conexión establecida exitosamente",
+    });
   });
 
   // Cuando el agente envía un mensaje
@@ -205,9 +255,65 @@ io.on("connection", (socket) => {
     const { idSala, numeroAgente } = data;
 
     if (roomConnections[idSala]) {
+      const { cliente, agenteConectado } = roomConnections[idSala];
+
+      console.log(
+        `🔚 Finalizando conversación en sala ${idSala} (estaba conectada: ${agenteConectado})`,
+      );
+
+      // Limpiar estructuras de datos
+      removeAgentConnection(numeroAgente, idSala);
+      delete roomConnections[idSala];
+
+      // Resetear sesión del cliente
+      if (sessions[cliente]) {
+        sessions[cliente].state = STATES.BOT;
+        sessions[cliente].step = "menu";
+        delete sessions[cliente].numeroAgente;
+        delete sessions[cliente].idSala;
+      }
+
+      // Hacer que el socket salga de la sala
+      socket.leave(idSala);
+
+      // Notificar al cliente solo si la conversación estaba activa
+      if (agenteConectado) {
+        sendGupshupMessage(cliente, {
+          type: "text",
+          text: "👋 *Conversación Finalizada*\n\nGracias por contactarnos.\n\nEscribe *menu* para volver al menú principal.",
+        }).catch((err) =>
+          console.error(
+            `❌ Error notificando fin de conversación:`,
+            err.message,
+          ),
+        );
+      }
+
+      console.log(
+        `✅ Conversación finalizada. Agente ${numeroAgente} ahora tiene ${agentConnections[numeroAgente]?.length || 0}/${MAX_CONNECTIONS_PER_AGENT} conexiones activas`,
+      );
+
+      // Confirmar al agente
+      socket.emit("conversation_ended", {
+        idSala: idSala,
+        message: "Conversación finalizada exitosamente",
+      });
+    } else {
+      console.error(`❌ Intento de finalizar sala inexistente: ${idSala}`);
+      socket.emit("error", { message: "Sala no encontrada" });
+    }
+  });
+
+  // Cuando un agente rechaza una solicitud de conexión
+  socket.on("reject_connection", (data) => {
+    const { idSala, numeroAgente, motivo } = data;
+
+    if (roomConnections[idSala]) {
       const { cliente } = roomConnections[idSala];
 
-      console.log(`🔚 Finalizando conversación en sala ${idSala}`);
+      console.log(
+        `❌ Agente ${numeroAgente} rechazó conexión en sala ${idSala}. Motivo: ${motivo || "No especificado"}`,
+      );
 
       // Limpiar estructuras de datos
       removeAgentConnection(numeroAgente, idSala);
@@ -224,14 +330,23 @@ io.on("connection", (socket) => {
       // Notificar al cliente
       sendGupshupMessage(cliente, {
         type: "text",
-        text: "👋 *Conversación Finalizada*\n\nGracias por contactarnos.\n\nEscribe *menu* para volver al menú principal.",
+        text: "🛠️ *Soporte Técnico*\n\n⚠️ El agente no puede atender tu solicitud en este momento.\n\n💡 Escribe *menu* para intentar conectarte con otro agente.",
       }).catch((err) =>
-        console.error(`❌ Error notificando fin de conversación:`, err.message),
+        console.error(`❌ Error notificando rechazo:`, err.message),
       );
 
       console.log(
-        `✅ Conversación finalizada. Agente ${numeroAgente} tiene ${agentConnections[numeroAgente]?.length || 0} conexiones activas`,
+        `✅ Solicitud rechazada. Agente ${numeroAgente} ahora tiene ${agentConnections[numeroAgente]?.length || 0}/${MAX_CONNECTIONS_PER_AGENT} conexiones`,
       );
+
+      // Confirmar al agente
+      socket.emit("connection_rejected", {
+        idSala: idSala,
+        message: "Solicitud rechazada exitosamente",
+      });
+    } else {
+      console.error(`❌ Intento de rechazar sala inexistente: ${idSala}`);
+      socket.emit("error", { message: "Sala no encontrada" });
     }
   });
 
@@ -355,10 +470,28 @@ app.post("/webhook", async (req, res) => {
       console.log(`👤 Nueva sesión creada para ${from}`);
     }
 
-    // ✅ Si ya está con un agente, reenviar mensaje SOLO a la sala específica
+    // ✅ Si ya está con un agente, verificar que el agente esté conectado en la sala
     if (sessions[from].state === STATES.WITH_AGENT) {
       const numeroAgente = sessions[from].numeroAgente;
       const idSala = sessions[from].idSala;
+
+      // Verificar que la sala existe y el agente está activamente conectado
+      if (
+        !roomConnections[idSala] ||
+        !roomConnections[idSala].agenteConectado
+      ) {
+        console.log(
+          `⚠️ Cliente ${from} está en WITH_AGENT pero agente no conectado aún en sala ${idSala}`,
+        );
+
+        // Enviar mensaje de espera
+        const waitPayload = {
+          type: "text",
+          text: "⏳ *Espera un momento*\n\nEl agente aún no ha aceptado la conversación.\n\n_Por favor espera a que se conecte..._",
+        };
+        await sendGupshupMessage(from, waitPayload);
+        return res.sendStatus(200);
+      }
 
       console.log(
         `📤 Reenviando mensaje de ${from} a sala ${idSala} (agente: ${numeroAgente})`,
@@ -522,10 +655,10 @@ app.post("/webhook", async (req, res) => {
           return res.sendStatus(200);
         }
 
-        // ===== PASO 3: Crear sala y establecer conexión =====
+        // ===== PASO 3: Crear sala en estado "esperando agente" =====
         const idSala = `${numeroAgente}-${from}`;
 
-        // Agregar conexión al agente
+        // Agregar conexión al agente (reservar el slot)
         const added = addAgentConnection(numeroAgente, idSala);
 
         if (!added) {
@@ -544,40 +677,46 @@ app.post("/webhook", async (req, res) => {
           return res.sendStatus(200);
         }
 
-        // Registrar sala
+        // Registrar sala en estado "esperando conexión del agente"
         roomConnections[idSala] = {
           agente: numeroAgente,
           cliente: from,
+          agenteConectado: false, // ⚠️ Agente AÚN NO se ha unido a la sala
+          createdAt: new Date().toISOString(),
         };
 
-        // Actualizar sesión
-        sessions[from].state = STATES.WITH_AGENT;
+        // Actualizar sesión - MANTENER EN CONNECTING hasta que agente se una
         sessions[from].numeroAgente = numeroAgente;
         sessions[from].idSala = idSala;
+        // ⚠️ NO cambiar a WITH_AGENT aquí
 
         console.log(
-          `✅ Sala ${idSala} creada. Agente ${numeroAgente} tiene ${agentConnections[numeroAgente].length}/${MAX_CONNECTIONS_PER_AGENT} conexiones`,
+          `⏳ Sala ${idSala} creada en espera. Agente ${numeroAgente} reservó slot ${agentConnections[numeroAgente].length}/${MAX_CONNECTIONS_PER_AGENT}`,
         );
 
-        // ===== PASO 4: Notificar SOLO a la sala (agente y cliente) =====
+        // ===== PASO 4: Notificar al agente que hay una nueva solicitud =====
 
-        // Notificar al agente vía Socket.IO (SOLO a esta sala)
-        io.to(idSala).emit("new_connection", {
+        // Enviar notificación broadcast a todos los sockets del agente
+        // El agente debe responder con join_room para activar la sala
+        io.emit("new_connection_request", {
           convId: from,
           numeroAgente: numeroAgente,
           idSala: idSala,
-          mensaje: "soporte", // Mensaje inicial del cliente
+          mensaje: "soporte",
           timestamp: new Date().toISOString(),
+          requiresAction: true, // El agente debe unirse explícitamente
         });
 
-        // Notificar al cliente vía WhatsApp
-        const successPayload = {
+        // Notificar al cliente que está esperando
+        const waitingPayload = {
           type: "text",
-          text: `🛠️ *Soporte Conectado*\n\n✅ Agente #${numeroAgente} está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._`,
+          text: `🛠️ *Solicitud Enviada*\n\n⏳ Se ha notificado al agente #${numeroAgente}.\n\n_Espera a que el agente acepte la conversación..._`,
         };
 
-        await sendGupshupMessage(from, successPayload);
-        console.log(`✅ Conexión establecida en sala ${idSala}`);
+        await sendGupshupMessage(from, waitingPayload);
+        console.log(
+          `📢 Notificación de nueva solicitud enviada para sala ${idSala}`,
+        );
 
         return res.sendStatus(200);
       } else if (text === "btn_ventas") {
@@ -621,10 +760,20 @@ app.post("/webhook/status", (req, res) => {
 
 // Endpoint para obtener estado de agentes (opcional, para debugging)
 app.get("/agents/status", (req, res) => {
+  const roomsStatus = Object.entries(roomConnections).map(([idSala, info]) => ({
+    idSala,
+    agente: info.agente,
+    cliente: info.cliente,
+    conectado: info.agenteConectado,
+    createdAt: info.createdAt,
+  }));
+
   res.json({
     availableNumbers: availableNumbers,
     agentConnections: agentConnections,
     activeRooms: Object.keys(roomConnections).length,
+    rooms: roomsStatus,
+    timestamp: new Date().toISOString(),
   });
 });
 
