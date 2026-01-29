@@ -1,10 +1,17 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const FormData = require("form-data");
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+function extractNumberFromMessage(text) {
+  // Captura el último bloque de dígitos que venga después de un guion
+  const match = text.match(/-\s*(\d+)\s*$/);
+  return match ? match[1] : null;
+}
 
 // Estados de la conversación
 const STATES = {
@@ -14,15 +21,12 @@ const STATES = {
 };
 
 const sessions = {};
-const MAX_CONCURRENT_CLIENTS = 3;
+const availableNumbers = [];
 
-// Helper para contar clientes activos con agentes
-function getActiveClientsCount() {
-  return Object.values(sessions).filter(
-    (s) => s.state === STATES.WITH_AGENT || s.state === STATES.CONNECTING,
-  ).length;
+// Función para obtener el siguiente número disponible
+function getNextAvailableNumber() {
+  return availableNumbers.shift(); // toma el primer número y lo elimina del array
 }
-
 // Helper para enviar mensajes a Gupshup
 async function sendGupshupMessage(destination, payload) {
   const params = new URLSearchParams({
@@ -66,6 +70,7 @@ async function downloadMediaFromGupshup(mediaId, from) {
       },
     );
 
+    // Determinar tipo de archivo según la respuesta
     const contentType = response.headers["content-type"];
     const buffer = Buffer.from(response.data);
 
@@ -86,10 +91,33 @@ async function downloadMediaFromGupshup(mediaId, from) {
 app.post("/webhook", async (req, res) => {
   const data = req.body;
 
+  // ✅ Detectar cuando llega la asignación del agente
+  if (data.type === "agent_assigned") {
+    console.log(`🎯 Agente asignado: ${data.numeroAgente} para ${data.from}`);
+
+    // Guardar el número del agente disponible
+    availableNumbers.push(data.numeroAgente);
+
+    // O enviarlo directamente al usuario
+    /* await sendGupshupMessage(data.from, {
+      type: "text",
+      text: `✅ Agente conectado. Tu número asignado es: ${data.numeroAgente}`,
+    });*/
+
+    return res.sendStatus(200);
+  }
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
     if (!message || !message.from) {
+      return res.sendStatus(200);
+    }
+
+    if (data.type === "agent_assigned") {
+      console.log(
+        `🎯 Agente asignado (legacy): ${data.numeroAgente} para ${data.from}`,
+      );
+      availableNumbers.push(data.numeroAgente);
       return res.sendStatus(200);
     }
 
@@ -104,6 +132,32 @@ app.post("/webhook", async (req, res) => {
         text = message.text.body.toLowerCase().trim();
         messageType = "text";
         console.log(`📨 Mensaje de texto recibido de ${from}: "${text}"`);
+        // --- CAPTURAR números enviados por agentes ---
+        const extractedNumber = extractNumberFromMessage(text);
+        if (extractedNumber) {
+          console.log(`✅ Número capturado: ${extractedNumber}`);
+          availableNumbers.push(extractedNumber); // availableNumbers debe estar declarado fuera de la función
+        }
+
+        // --- ENTREGAR NÚMERO AL USUARIO ---
+        if (text === "dar número") {
+          const numberToSend = getNextAvailableNumber(); // tu función para tomar el siguiente número
+          let payload;
+          if (numberToSend) {
+            payload = {
+              type: "text",
+              text: `📱 Número asignado: ${numberToSend}`,
+            };
+          } else {
+            payload = {
+              type: "text",
+              text: "⚠️ No hay números disponibles en este momento.",
+            };
+          }
+          // await sendGupshupMessage(from, payload);
+          return res.sendStatus(200); // importante, para que no siga procesando el mensaje
+        }
+
         break;
 
       case "image":
@@ -182,11 +236,23 @@ app.post("/webhook", async (req, res) => {
     // Si ya está con un agente, reenviar mensaje (con medios) a la plataforma externa
     if (sessions[from].state === STATES.WITH_AGENT) {
       const numeroAgente = sessions[from].numeroAgente;
-      console.log(
-        `📤 Reenviando mensaje de ${from} al agente ${numeroAgente}...`,
-      );
+      const idSala = `${numeroAgente}-${from}`;
+      console.log(`📤 Reenviando mensaje de ${from} al soporte...`);
 
-      // Preparar payload para enviar al webhook externo
+      io.to(idSala).emit("chat_message", {
+        convId: from,
+        msg: {
+          id: Date.now(),
+          emisor: "contacto",
+          mensaje: text || "",
+          tipo: messageType,
+          timestamp: Date.now(),
+          origen: "whatsapp",
+        },
+      });
+
+      return res.sendStatus(200);
+
       let payloadToSupport = {
         from,
         text: text || "",
@@ -194,7 +260,6 @@ app.post("/webhook", async (req, res) => {
         message_type: messageType,
         timestamp: new Date().toISOString(),
         object: "whatsapp_business_account",
-        numeroAgente: numeroAgente,
       };
 
       // Si hay medios, descargarlos y enviarlos
@@ -205,7 +270,7 @@ app.post("/webhook", async (req, res) => {
 
           payloadToSupport.media = {
             ...mediaInfo,
-            buffer: mediaData.buffer.toString("base64"),
+            buffer: mediaData.buffer.toString("base64"), // Convertir a base64 para enviar
             content_type: mediaData.contentType,
             size: mediaData.size,
           };
@@ -218,6 +283,7 @@ app.post("/webhook", async (req, res) => {
             `❌ Error procesando media de ${from}:`,
             mediaError.message,
           );
+          // Aún así enviamos el mensaje pero sin el archivo
           payloadToSupport.media_error = mediaError.message;
         }
       }
@@ -240,6 +306,7 @@ app.post("/webhook", async (req, res) => {
         `⏳ Usuario ${from} está en proceso de conexión, ignorando mensaje`,
       );
 
+      // Si el usuario envía un archivo mientras está conectando, notificarle
       if (messageType !== "text") {
         const connectingPayload = {
           type: "text",
@@ -251,35 +318,18 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ MANEJO DEL COMANDO "MENU" - NO SE ENVÍA AL APLICATIVO
+    // Reset al menú
     if (text === "menu" || text === "menú") {
-      console.log(
-        `🔄 Usuario ${from} solicitó el menú - gestionado localmente`,
-      );
       sessions[from].step = "menu";
       sessions[from].state = STATES.BOT;
-
-      const menuPayload = {
-        type: "quick_reply",
-        msgid: "menu_principal",
-        content: {
-          type: "text",
-          text: "👋 ¡Bienvenido!\n\n¿En qué podemos ayudarte hoy?",
-        },
-        options: [
-          { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
-          { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
-        ],
-      };
-
-      await sendGupshupMessage(from, menuPayload);
-      return res.sendStatus(200);
+      console.log(`🔄 Sesión reiniciada para ${from}`);
     }
 
     let messagePayload = null;
 
     // FLUJO DEL BOT - MENÚ PRINCIPAL
     if (sessions[from].step === "menu") {
+      // Si el usuario envía un archivo en el menú principal
       if (messageType !== "text" && messageType !== "interactive") {
         console.log(
           `⚠️ Usuario ${from} envió ${messageType} en el menú principal`,
@@ -289,9 +339,7 @@ app.post("/webhook", async (req, res) => {
           text: `📎 *Archivo recibido*\n\nPara enviar archivos necesitas estar conectado con un agente.\n\nSelecciona *"🛠️ Soporte"* para hablar con un agente y luego podrás enviar imágenes, videos, audios y documentos.`,
         };
 
-        await sendGupshupMessage(from, messagePayload);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
+        // Mostrar el menú después del mensaje
         const menuPayload = {
           type: "quick_reply",
           msgid: "menu_principal",
@@ -305,6 +353,8 @@ app.post("/webhook", async (req, res) => {
           ],
         };
 
+        await sendGupshupMessage(from, messagePayload);
+        await new Promise((resolve) => setTimeout(resolve, 500)); // Pequeña pausa
         await sendGupshupMessage(from, menuPayload);
         return res.sendStatus(200);
       }
@@ -326,6 +376,7 @@ app.post("/webhook", async (req, res) => {
     }
     // FLUJO DEL BOT - OPCIONES
     else if (sessions[from].step === "option") {
+      // Si el usuario envía un archivo en lugar de seleccionar una opción
       if (messageType !== "text" && messageType !== "interactive") {
         console.log(
           `⚠️ Usuario ${from} envió ${messageType} en lugar de seleccionar opción`,
@@ -339,30 +390,11 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // ✅ MANEJO DE SOLICITUD DE SOPORTE (botón o texto "soporte")
-      if (text === "btn_soporte" || text === "soporte") {
-        console.log(`🛠️ Usuario ${from} solicita soporte...`);
-
-        // Verificar límite de clientes concurrentes
-        const activeClients = getActiveClientsCount();
-        if (activeClients >= MAX_CONCURRENT_CLIENTS) {
-          console.log(
-            `⚠️ Límite alcanzado: ${activeClients}/${MAX_CONCURRENT_CLIENTS} clientes activos`,
-          );
-
-          const limitPayload = {
-            type: "text",
-            text: `🛠️ *Soporte Técnico*\n\n⏳ Actualmente tenemos ${MAX_CONCURRENT_CLIENTS} conversaciones activas.\n\n💡 Por favor intenta nuevamente en unos minutos.\n\nEscribe *menu* para ver otras opciones.`,
-          };
-
-          await sendGupshupMessage(from, limitPayload);
-          sessions[from].step = "menu";
-          return res.sendStatus(200);
-        }
-
+      if (text === "btn_soporte") {
+        console.log(`🔄 Usuario ${from} solicita soporte...`);
         sessions[from].state = STATES.CONNECTING;
 
-        // ✅ AQUÍ SÍ ENVIAMOS AL APLICATIVO (solo cuando pide soporte)
+        // ===== PASO 1: Guardar "soporte" en el chat =====
         try {
           await axios.post(
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
@@ -376,17 +408,12 @@ app.post("/webhook", async (req, res) => {
             },
             { timeout: 5000 },
           );
-          console.log(
-            `✅ Solicitud de soporte enviada al aplicativo para ${from}`,
-          );
+          console.log(`✅ Mensaje 'soporte' guardado en el chat`);
         } catch (e) {
-          console.error(
-            "⚠️ Error enviando solicitud al aplicativo:",
-            e.message,
-          );
+          console.error("⚠️ Error guardando 'soporte' en chat:", e.message);
         }
 
-        // Mensaje de conexión en progreso
+        // ===== PASO 2: Aviso de conexión en progreso =====
         messagePayload = {
           type: "text",
           text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
@@ -395,7 +422,7 @@ app.post("/webhook", async (req, res) => {
         await sendGupshupMessage(from, messagePayload);
         console.log(`📤 Mensaje de conexión enviado a ${from}`);
 
-        // Intentar conexión al webhook externo
+        // ===== PASO 3: Intentar conexión al webhook externo =====
         console.log(
           `--- Intentando conectar ${from} con soporte (10s timeout) ---`,
         );
@@ -416,14 +443,11 @@ app.post("/webhook", async (req, res) => {
             { timeout: 10000 },
           );
 
-          // Extraer número de agente de la respuesta (ajusta según tu API)
-          const numeroAgente = response.data?.numeroAgente || "default";
+          console.log(`✅ Agente conectado para ${from}`);
 
-          console.log(`✅ Agente ${numeroAgente} conectado para ${from}`);
-
+          // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
-          sessions[from].numeroAgente = numeroAgente;
-
+          sessions[from].numeroAgente = numero;
           const successPayload = {
             type: "text",
             text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
@@ -432,10 +456,12 @@ app.post("/webhook", async (req, res) => {
           await sendGupshupMessage(from, successPayload);
           console.log(`✅ Mensaje de éxito enviado a ${from}`);
         } catch (error) {
+          // ===== PASO 4: Error - Aviso de falla de conexión =====
           const errorType =
             error.code === "ECONNABORTED" ? "Timeout (>10s)" : error.message;
           console.log(`❌ Soporte no disponible para ${from}: ${errorType}`);
 
+          // Restablecer estado a BOT
           sessions[from].state = STATES.BOT;
           sessions[from].step = "menu";
 
@@ -448,6 +474,7 @@ app.post("/webhook", async (req, res) => {
           console.log(`❌ Mensaje de error enviado a ${from}`);
         }
 
+        // ✅ RETORNAR AQUÍ para evitar el envío duplicado
         return res.sendStatus(200);
       } else if (text === "btn_ventas") {
         console.log(`💰 Usuario ${from} solicita información de ventas`);
@@ -456,7 +483,79 @@ app.post("/webhook", async (req, res) => {
           text: "💰 *Ventas*\n\nVisita nuestra web: https://tuapp.com/ventas\n\nEscribe *menu* para volver.",
         };
         sessions[from].step = "menu";
+      } else if (text === "soporte") {
+        console.log(`🔄 Usuario ${from} escribió "soporte" como texto...`);
+        sessions[from].state = STATES.CONNECTING;
+
+        // ===== ENVIAR CON COLA Y PAUSA =====
+        try {
+          await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "soporte",
+              type: "incoming_message",
+              object: "whatsapp_business_account",
+              cola: "PRUEBAS",
+              pausa: 1,
+            },
+            { timeout: 5000 },
+          );
+          console.log(`✅ Texto 'soporte' con cola/pausa enviado al chat`);
+        } catch (e) {
+          console.error("⚠️ Error enviando 'soporte':", e.message);
+        }
+
+        messagePayload = {
+          type: "text",
+          text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
+        };
+
+        await sendGupshupMessage(from, messagePayload);
+
+        // Intentar conexión completa
+        try {
+          const response = await axios.post(
+            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            {
+              from: from,
+              text: "soporte",
+              type: "incoming_message",
+              event: "support_requested",
+              object: "whatsapp_business_account",
+              timestamp: new Date().toISOString(),
+              cola: "PRUEBAS",
+              pausa: 1,
+            },
+            { timeout: 10000 },
+          );
+
+          console.log(`✅ Agente conectado para ${from} (vía texto)`);
+          sessions[from].state = STATES.WITH_AGENT;
+          sessions[from].numeroAgente = numero;
+
+          const successPayload = {
+            type: "text",
+            text: "🛠️ *Soporte Conectado*\n\n✅ Un agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
+          };
+
+          await sendGupshupMessage(from, successPayload);
+        } catch (error) {
+          console.log(`❌ Soporte no disponible: ${error.message}`);
+          sessions[from].state = STATES.BOT;
+          sessions[from].step = "menu";
+
+          const failurePayload = {
+            type: "text",
+            text: "🛠️ *Soporte Técnico*\n\n❌ Lo sentimos, no hay agentes disponibles.\n\n💡 Escribe *menu* para intentar más tarde.",
+          };
+
+          await sendGupshupMessage(from, failurePayload);
+        }
+
+        return res.sendStatus(200);
       } else {
+        // Si el usuario escribe algo que no es una opción válida
         console.log(`⚠️ Entrada inválida de ${from}: "${text}"`);
         messagePayload = {
           type: "text",
@@ -465,7 +564,7 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // Enviar respuesta final si existe un payload
+    // ✅ Enviar respuesta final si existe un payload
     if (messagePayload) {
       console.log(
         `📨 Enviando payload a ${from}:`,
@@ -481,52 +580,13 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Endpoint para recibir confirmaciones de entrega/lectura
+// Endpoint para recibir confirmaciones de entrega/lectura (opcional)
 app.post("/webhook/status", (req, res) => {
   console.log("📊 Status update:", JSON.stringify(req.body, null, 2));
   res.sendStatus(200);
 });
 
-// Endpoint para liberar una sesión cuando un agente termina la conversación
-app.post("/webhook/end-session", (req, res) => {
-  const { from } = req.body;
-
-  if (sessions[from]) {
-    console.log(`🔚 Finalizando sesión de ${from}`);
-    sessions[from].state = STATES.BOT;
-    sessions[from].step = "menu";
-    delete sessions[from].numeroAgente;
-  }
-
-  res.sendStatus(200);
-});
-
-// Endpoint para obtener estadísticas
-app.get("/stats", (req, res) => {
-  const activeClients = getActiveClientsCount();
-  const totalSessions = Object.keys(sessions).length;
-
-  res.json({
-    activeClients,
-    maxClients: MAX_CONCURRENT_CLIENTS,
-    availableSlots: MAX_CONCURRENT_CLIENTS - activeClients,
-    totalSessions,
-    sessions: Object.keys(sessions).map((key) => ({
-      from: key,
-      state: sessions[key].state,
-      step: sessions[key].step,
-      numeroAgente: sessions[key].numeroAgente || null,
-    })),
-  });
-});
-
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor en puerto ${PORT}`);
-  console.log(`📊 Estadísticas: http://localhost:${PORT}/stats`);
-  console.log(
-    `⚡ Capacidad máxima: ${MAX_CONCURRENT_CLIENTS} clientes concurrentes`,
-  );
-});
+app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
