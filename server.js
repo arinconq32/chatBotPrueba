@@ -125,6 +125,7 @@ app.post("/webhook", async (req, res) => {
     let text = "";
     let mediaInfo = null;
     let messageType = "text";
+    const numeroExtraido = extractNumberFromMessage(text);
 
     // Detectar tipo de mensaje y extraer contenido
     switch (message.type) {
@@ -447,7 +448,7 @@ app.post("/webhook", async (req, res) => {
 
           // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
-          const numero = getNextAvailableNumber();
+          const numero = numeroExtraido;
 
           if (!numero) {
             throw new Error("No hay agentes disponibles");
