@@ -251,7 +251,7 @@ app.post("/webhook", async (req, res) => {
         },
       });
 
-      return res.sendStatus(200);
+      //return res.sendStatus(200);
 
       let payloadToSupport = {
         from,
@@ -447,6 +447,12 @@ app.post("/webhook", async (req, res) => {
 
           // ===== PASO 4: Éxito - Aviso de conexión exitosa (con instrucciones para medios) =====
           sessions[from].state = STATES.WITH_AGENT;
+          const numero = getNextAvailableNumber();
+
+          if (!numero) {
+            throw new Error("No hay agentes disponibles");
+          }
+
           sessions[from].numeroAgente = numero;
           const successPayload = {
             type: "text",
