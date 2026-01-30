@@ -316,17 +316,14 @@ app.post("/webhook", async (req, res) => {
     const resultado = asignarSalaAAgente(numeroAgente, numeroCliente);
 
     if (resultado.success) {
-      // 🆕 MARCAR LA SALA COMO ESTABLECIDA
-      establecerSala(numeroAgente, numeroCliente);
-
       // Actualizar sesión del cliente
       if (sessions[numeroCliente]) {
-        sessions[numeroCliente].state = STATES.WITH_AGENT;
+        sessions[numeroCliente].state = STATES.CONNECTING;
         sessions[numeroCliente].numeroAgente = numeroAgente;
       }
 
       console.log(
-        `✅ Conversación establecida entre ${numeroAgente} y ${numeroCliente}`,
+        `⏳ Sala ${numeroAgente}-${numeroCliente} creada pero NO establecida (esperando aceptación del agente)`,
       );
 
       // 🆕 NO ENVIAR MENSAJE AL CLIENTE (el servidor ya se encarga de esto)
@@ -381,7 +378,32 @@ app.post("/webhook", async (req, res) => {
 
     return res.sendStatus(200);
   }
+  // ✅ NUEVO: Handler para cuando el agente REALMENTE acepta
+  if (data.type === "agent_accepted") {
+    const numeroAgente = data.numeroAgente;
+    const numeroCliente = data.numeroCliente;
 
+    console.log(`✅ AGENTE ${numeroAgente} ACEPTÓ al cliente ${numeroCliente}`);
+
+    // AHORA SÍ establecer la sala
+    establecerSala(numeroAgente, numeroCliente);
+
+    // Actualizar estado de la sesión
+    if (sessions[numeroCliente]) {
+      sessions[numeroCliente].state = STATES.WITH_AGENT;
+    }
+
+    // AHORA SÍ enviar mensaje al cliente
+    await sendGupshupMessage(numeroCliente, {
+      type: "text",
+      text: "✅ *Agente conectado*\n\nUn agente está listo para ayudarte.\n\nAhora puedes enviar tu consulta.",
+    });
+
+    console.log(
+      `✅ Conexión confirmada entre ${numeroAgente} y ${numeroCliente}`,
+    );
+    return res.sendStatus(200);
+  }
   // ✅ DETECTAR FINALIZACIÓN DE CONVERSACIÓN
   if (data.type === "conversation_ended") {
     const numeroAgente = data.numeroAgente;
