@@ -29,6 +29,92 @@ const salasActivas = new Map(); // { 'numeroAgente-numeroCliente': { agente, cli
 // 🆕 Constantes de configuración
 const MAX_SALAS_POR_AGENTE = 3;
 
+// 🆕 Función para mostrar el estado en consola de forma visual
+function mostrarEstadoEnConsola() {
+  console.log("\n" + "═".repeat(80));
+  console.log("📊 ESTADO DEL SISTEMA - " + new Date().toLocaleTimeString());
+  console.log("═".repeat(80));
+
+  // AGENTES REGISTRADOS
+  console.log("\n🤖 AGENTES REGISTRADOS:");
+  if (availableNumbers.length === 0) {
+    console.log("   ⚠️  Ningún agente registrado");
+  } else {
+    availableNumbers.forEach((numero, index) => {
+      console.log(`   ${index + 1}. ${numero}`);
+    });
+  }
+
+  // AGENTES Y SUS SALAS
+  console.log("\n👥 AGENTES Y SUS CLIENTES:");
+  if (agentesData.size === 0) {
+    console.log("   ⚠️  Sin agentes activos");
+  } else {
+    agentesData.forEach((info, numero) => {
+      const disponibilidad =
+        info.salas.size < info.maxSalas ? "🟢 DISPONIBLE" : "🔴 OCUPADO";
+      console.log(`\n   📞 Agente: ${numero} ${disponibilidad}`);
+      console.log(`      Salas activas: ${info.salas.size}/${info.maxSalas}`);
+
+      if (info.salas.size > 0) {
+        console.log(`      Clientes:`);
+        Array.from(info.salas).forEach((cliente, idx) => {
+          console.log(`         ${idx + 1}. ${cliente}`);
+        });
+      } else {
+        console.log(`      Sin clientes`);
+      }
+    });
+  }
+
+  // SALAS ACTIVAS
+  console.log("\n🏠 SALAS ACTIVAS:");
+  if (salasActivas.size === 0) {
+    console.log("   ⚠️  Sin salas activas");
+  } else {
+    let contador = 1;
+    salasActivas.forEach((data, idSala) => {
+      const duracion = Math.round((Date.now() - data.timestamp) / 1000);
+      const estado = data.establecida ? "✅ ESTABLECIDA" : "⏳ PENDIENTE";
+
+      console.log(`\n   ${contador}. Sala: ${idSala}`);
+      console.log(`      Estado: ${estado}`);
+      console.log(`      Agente: ${data.agente}`);
+      console.log(`      Cliente: ${data.cliente}`);
+      console.log(`      Duración: ${duracion}s`);
+      contador++;
+    });
+  }
+
+  // SESIONES ACTIVAS
+  console.log("\n💬 SESIONES DE CLIENTES:");
+  const sessionsList = Object.entries(sessions);
+  if (sessionsList.length === 0) {
+    console.log("   ⚠️  Sin sesiones activas");
+  } else {
+    sessionsList.forEach(([numero, session], idx) => {
+      let estadoEmoji = "🤖";
+      if (session.state === STATES.CONNECTING) estadoEmoji = "⏳";
+      if (session.state === STATES.WITH_AGENT) estadoEmoji = "👤";
+
+      console.log(`\n   ${idx + 1}. Cliente: ${numero}`);
+      console.log(
+        `      Estado: ${estadoEmoji} ${session.state.toUpperCase()}`,
+      );
+      console.log(`      Paso: ${session.step || "N/A"}`);
+      if (session.numeroAgente) {
+        console.log(`      Agente asignado: ${session.numeroAgente}`);
+      }
+    });
+  }
+
+  console.log("\n" + "═".repeat(80));
+  console.log(
+    `📈 RESUMEN: ${agentesData.size} agentes | ${salasActivas.size} salas | ${sessionsList.length} sesiones`,
+  );
+  console.log("═".repeat(80) + "\n");
+}
+
 // 🆕 Función para verificar si un agente puede aceptar más salas
 function puedeAceptarSala(numeroAgente) {
   const agenteInfo = agentesData.get(numeroAgente);
@@ -38,6 +124,8 @@ function puedeAceptarSala(numeroAgente) {
       salas: new Set(),
       maxSalas: MAX_SALAS_POR_AGENTE,
     });
+    console.log(`🆕 Agente ${numeroAgente} inicializado`);
+    mostrarEstadoEnConsola();
     return true;
   }
   return agenteInfo.salas.size < agenteInfo.maxSalas;
@@ -75,6 +163,9 @@ function asignarSalaAAgente(numeroAgente, numeroCliente) {
   console.log(
     `✅ Sala ${idSala} asignada. Agente tiene ${agenteInfo.salas.size}/${agenteInfo.maxSalas} salas`,
   );
+
+  mostrarEstadoEnConsola();
+
   return { success: true, idSala };
 }
 
@@ -99,6 +190,8 @@ function liberarSala(numeroAgente, numeroCliente) {
     );
   }
 
+  mostrarEstadoEnConsola();
+
   return true;
 }
 
@@ -108,9 +201,11 @@ function obtenerAgenteDisponible() {
   for (let i = 0; i < availableNumbers.length; i++) {
     const numero = availableNumbers[i];
     if (puedeAceptarSala(numero)) {
+      console.log(`✅ Agente disponible encontrado: ${numero}`);
       return numero;
     }
   }
+  console.log(`❌ No hay agentes disponibles`);
   return null;
 }
 
@@ -127,7 +222,10 @@ function establecerSala(numeroAgente, numeroCliente) {
   const sala = salasActivas.get(idSala);
   if (sala) {
     sala.establecida = true;
-    console.log(`✅ Sala ${idSala} establecida`);
+    console.log(
+      `✅ Sala ${idSala} establecida - AHORA los mensajes se reenviarán al agente`,
+    );
+    mostrarEstadoEnConsola();
     return true;
   }
   return false;
@@ -199,9 +297,11 @@ app.post("/webhook", async (req, res) => {
 
   // ✅ DETECTAR ASIGNACIÓN DE AGENTE (mensaje interno del servidor)
   if (data.type === "agent_assigned") {
+    console.log("\n" + "🎯".repeat(40));
     console.log(
-      `🎯 Agente asignado: ${data.numeroAgente} para ${data.numeroCliente || data.from}`,
+      `🎯 AGENTE ASIGNADO: ${data.numeroAgente} para ${data.numeroCliente || data.from}`,
     );
+    console.log("🎯".repeat(40) + "\n");
 
     const numeroAgente = data.numeroAgente;
     const numeroCliente = data.numeroCliente || data.from;
@@ -287,9 +387,11 @@ app.post("/webhook", async (req, res) => {
     const numeroAgente = data.numeroAgente;
     const numeroCliente = data.numeroCliente || data.from;
 
+    console.log("\n" + "🔚".repeat(40));
     console.log(
-      `🔚 Finalizando conversación entre ${numeroAgente} y ${numeroCliente}`,
+      `🔚 FINALIZANDO conversación entre ${numeroAgente} y ${numeroCliente}`,
     );
+    console.log("🔚".repeat(40) + "\n");
 
     liberarSala(numeroAgente, numeroCliente);
 
@@ -403,25 +505,41 @@ app.post("/webhook", async (req, res) => {
     if (!sessions[from]) {
       sessions[from] = { step: "menu", state: STATES.BOT };
       console.log(`👤 Nueva sesión creada para ${from}`);
+      mostrarEstadoEnConsola();
     }
 
+    // 🔴🔴🔴 AQUÍ ES DONDE SE GESTIONA EL REENVÍO DE MENSAJES 🔴🔴🔴
     // 🆕 SI YA ESTÁ CON UN AGENTE - Verificar que la sala esté establecida antes de reenviar
     if (sessions[from].state === STATES.WITH_AGENT) {
       const numeroAgente = sessions[from].numeroAgente;
       const idSala = `${numeroAgente}-${from}`;
 
+      console.log(`\n${"─".repeat(60)}`);
+      console.log(`🔍 VERIFICANDO REENVÍO DE MENSAJE`);
+      console.log(`   Cliente: ${from}`);
+      console.log(`   Agente: ${numeroAgente}`);
+      console.log(`   Sala: ${idSala}`);
+
       // 🆕 VERIFICAR SI LA SALA ESTÁ ESTABLECIDA
-      if (!salaEstablecida(numeroAgente, from)) {
+      const establecida = salaEstablecida(numeroAgente, from);
+      console.log(
+        `   Estado sala: ${establecida ? "✅ ESTABLECIDA" : "❌ NO ESTABLECIDA"}`,
+      );
+      console.log(`${"─".repeat(60)}\n`);
+
+      if (!establecida) {
         console.log(
-          `⏳ Sala ${idSala} aún no establecida, mensaje del bot ignorado`,
+          `⏳ Sala ${idSala} aún no establecida, mensaje NO se reenvía al agente`,
         );
+        console.log(`   ℹ️  El mensaje era: "${text}"`);
         // NO reenviar el mensaje hasta que la sala esté establecida
         return res.sendStatus(200);
       }
 
       console.log(
-        `📤 Reenviando mensaje de ${from} al agente ${numeroAgente} (sala establecida)...`,
+        `📤 ✅ REENVIANDO mensaje de ${from} al agente ${numeroAgente} (sala establecida)...`,
       );
+      console.log(`   Mensaje: "${text}"`);
 
       // Reenviar al servidor (solo si la sala está establecida)
       let payloadToSupport = {
@@ -466,6 +584,7 @@ app.post("/webhook", async (req, res) => {
           payloadToSupport,
           { timeout: 10000 },
         );
+        console.log(`✅ Mensaje reenviado exitosamente al servidor`);
       } catch (e) {
         console.error("❌ Error reenviando al soporte:", e.message);
       }
@@ -492,18 +611,26 @@ app.post("/webhook", async (req, res) => {
 
     // Reset al menú
     if (text === "menu" || text === "menú") {
+      console.log(`\n${"═".repeat(60)}`);
+      console.log(`🔄 RESET AL MENÚ - Cliente: ${from}`);
+
       // 🆕 Si estaba con un agente, liberar la sala
       if (
         sessions[from].state === STATES.WITH_AGENT &&
         sessions[from].numeroAgente
       ) {
+        console.log(
+          `   ⚠️  Cliente estaba con agente ${sessions[from].numeroAgente}`,
+        );
+        console.log(`   🧹 Liberando sala...`);
         liberarSala(sessions[from].numeroAgente, from);
         delete sessions[from].numeroAgente;
       }
 
       sessions[from].step = "menu";
       sessions[from].state = STATES.BOT;
-      console.log(`🔄 Sesión reiniciada para ${from}`);
+      console.log(`   ✅ Sesión reiniciada - Estado: BOT`);
+      console.log(`${"═".repeat(60)}\n`);
     }
 
     let messagePayload = null;
@@ -572,11 +699,15 @@ app.post("/webhook", async (req, res) => {
       }
 
       if (text === "btn_soporte" || text === "soporte") {
-        console.log(`🔄 Usuario ${from} solicita soporte...`);
+        console.log("\n" + "🆘".repeat(40));
+        console.log(`🆘 SOLICITUD DE SOPORTE - Cliente: ${from}`);
+        console.log("🆘".repeat(40) + "\n");
+
         sessions[from].state = STATES.CONNECTING;
 
-        // ===== PASO 1: Guardar "soporte" en el chat =====
+        // ===== PASO 1: Guardar "soporte" en el chat (sin cola/pausa) =====
         try {
+          console.log(`📝 PASO 1: Guardando mensaje 'soporte' en el chat...`);
           await axios.post(
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
@@ -584,8 +715,7 @@ app.post("/webhook", async (req, res) => {
               text: "soporte",
               type: "incoming_message",
               object: "whatsapp_business_account",
-              cola: "PRUEBAS",
-              pausa: 1,
+              // 🔴 NO incluir cola/pausa aquí - solo guardar el mensaje
             },
             { timeout: 5000 },
           );
@@ -595,17 +725,21 @@ app.post("/webhook", async (req, res) => {
         }
 
         // ===== PASO 2: Aviso de conexión en progreso =====
+        console.log(
+          `📝 PASO 2: Enviando mensaje de "Conectando..." al cliente`,
+        );
         messagePayload = {
           type: "text",
           text: "🛠️ *Conectando con Soporte*\n\n⏳ Buscando agente disponible...\n\n_Por favor espera un momento._",
         };
 
         await sendGupshupMessage(from, messagePayload);
-        console.log(`📤 Mensaje de conexión enviado a ${from}`);
+        console.log(`✅ Mensaje de conexión enviado a ${from}`);
 
-        // ===== PASO 3: Intentar conexión al webhook externo =====
+        // ===== PASO 3: Intentar conexión al webhook externo (CON cola/pausa) =====
+        console.log(`📝 PASO 3: Enviando solicitud de soporte al servidor...`);
         console.log(
-          `--- Intentando conectar ${from} con soporte (10s timeout) ---`,
+          `   URL: https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook`,
         );
 
         try {
@@ -625,6 +759,7 @@ app.post("/webhook", async (req, res) => {
           );
 
           console.log(`✅ Solicitud de soporte enviada para ${from}`);
+          console.log(`   Response status: ${response.status}`);
 
           // 🆕 NO cambiar el estado aquí - esperar a que el servidor confirme la asignación
           // El estado se cambiará cuando llegue el evento "agent_assigned"
@@ -636,7 +771,7 @@ app.post("/webhook", async (req, res) => {
           };
 
           await sendGupshupMessage(from, waitingPayload);
-          console.log(`📤 Mensaje de espera enviado a ${from}`);
+          console.log(`✅ Mensaje de espera enviado a ${from}`);
         } catch (error) {
           // ===== PASO 4: Error - Aviso de falla de conexión =====
           const errorType =
@@ -724,5 +859,19 @@ app.post("/webhook/status", (req, res) => {
 
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
+// 🆕 Mostrar estado cada 30 segundos
+setInterval(() => {
+  mostrarEstadoEnConsola();
+}, 30000);
+
+// 🆕 Mostrar estado al iniciar
+setTimeout(() => {
+  mostrarEstadoEnConsola();
+}, 2000);
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor en puerto ${PORT}`);
+  console.log(`📡 Webhook: http://localhost:${PORT}/webhook`);
+  console.log(`📊 Debug: http://localhost:${PORT}/agentes/estado`);
+});
