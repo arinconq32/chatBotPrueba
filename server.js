@@ -54,37 +54,48 @@ app.post("/webhook", async (req, res) => {
     const numeroAgente = data.numeroAgente;
     const numeroCliente = data.numeroCliente;
 
-    console.log(`\n${"=".repeat(60)}`);
+    console.log(`\n${"🟢".repeat(35)}`);
     console.log(`✅ AGENTE ACEPTÓ LA CONVERSACIÓN`);
     console.log(`   • Agente: ${numeroAgente}`);
     console.log(`   • Cliente: ${numeroCliente}`);
-    console.log(`${"=".repeat(60)}\n`);
+    console.log(`${"🟢".repeat(35)}\n`);
 
-    // Verificar que la sesión existe y está en estado CONNECTING
+    // Verificar que la sesión existe
     if (!sessions[numeroCliente]) {
       console.warn(`⚠️ No existe sesión para ${numeroCliente}`);
+      console.warn(`   Sesiones activas:`, Object.keys(sessions));
       return res.sendStatus(200);
     }
+
+    // Verificar estado
+    console.log(`📊 Estado actual de sesión ${numeroCliente}:`);
+    console.log(`   • State: ${sessions[numeroCliente].state}`);
+    console.log(`   • Step: ${sessions[numeroCliente].step}`);
 
     if (sessions[numeroCliente].state !== STATES.CONNECTING) {
-      console.warn(`⚠️ Cliente ${numeroCliente} no está en estado CONNECTING`);
+      console.warn(`⚠️ Cliente ${numeroCliente} NO está en CONNECTING`);
+      console.warn(`   Estado actual: ${sessions[numeroCliente].state}`);
       return res.sendStatus(200);
     }
 
-    // ✅ AHORA SÍ establecer la sesión
+    // ✅ Establecer sesión
     sessions[numeroCliente].state = STATES.WITH_AGENT;
     sessions[numeroCliente].numeroAgente = numeroAgente;
 
     console.log(`✅ Sesión establecida: ${numeroCliente} ↔ ${numeroAgente}`);
 
-    // ✅ AHORA SÍ enviar confirmación al cliente
+    // ✅ Enviar confirmación al cliente
     const successPayload = {
       type: "text",
-      text: "✅ *Agente conectado*\n\nUn agente está listo para ayudarte.\n\n📎 *Ahora puedes enviar:*\n• Imágenes 📷\n• Videos 🎥\n• Audios 🎵\n• Documentos 📄\n\n_Escribe tu mensaje o envía archivos directamente._",
+      text: "✅ *Agente conectado*\n\nUn agente está listo para ayudarte.\n\nAhora puedes enviar tu consulta.",
     };
 
-    await sendGupshupMessage(numeroCliente, successPayload);
-    console.log(`✅ Confirmación enviada al cliente ${numeroCliente}`);
+    try {
+      await sendGupshupMessage(numeroCliente, successPayload);
+      console.log(`✅ Confirmación enviada al cliente ${numeroCliente}`);
+    } catch (error) {
+      console.error(`❌ Error enviando confirmación:`, error.message);
+    }
 
     return res.sendStatus(200);
   }
