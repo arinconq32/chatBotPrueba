@@ -87,7 +87,7 @@ app.post("/webhook", async (req, res) => {
     // ✅ Enviar confirmación al cliente
     const successPayload = {
       type: "text",
-      text: "✅ *Agente conectado*\n\nUn agente está listo para ayudarte.\n\nAhora puedes enviar tu consulta.",
+      text: `✅ *Agente conectado*\n\nAhora estás en conversación privada con el agente *${numeroAgente}*.\n\n📱 Escribe tu consulta aquí.`,
     };
 
     try {
@@ -247,36 +247,6 @@ app.post("/webhook", async (req, res) => {
           console.log(
             `✅ Solicitud enviada al servidor (esperando aceptación de agente...)`,
           );
-
-          // 🆕 TIMEOUT DE SEGURIDAD (30 segundos)
-          setTimeout(async () => {
-            // Verificar si la sesión TODAVÍA está en CONNECTING
-            if (sessions[from] && sessions[from].state === STATES.CONNECTING) {
-              console.log(`\n${"⏰".repeat(30)}`);
-              console.log(
-                `⏰ TIMEOUT: Ningún agente aceptó la solicitud de ${from}`,
-              );
-              console.log(`${"⏰".repeat(30)}\n`);
-
-              // Restablecer estado
-              sessions[from].state = STATES.BOT;
-              sessions[from].step = "menu";
-              delete sessions[from].requestTime;
-
-              // Enviar mensaje de timeout
-              const timeoutPayload = {
-                type: "text",
-                text: "🛠️ *Soporte Técnico*\n\n❌ No hubo agentes disponibles en este momento.\n\n💡 Escribe *menu* para intentar nuevamente más tarde.",
-              };
-
-              await sendGupshupMessage(from, timeoutPayload);
-              console.log(`📤 Mensaje de timeout enviado a ${from}`);
-            } else {
-              console.log(
-                `✅ Timeout cancelado para ${from} (ya fue atendido)`,
-              );
-            }
-          }, 30000); //
         } catch (error) {
           // Solo manejar errores de red/servidor
           console.error(`❌ Error al enviar solicitud:`, error.message);
