@@ -736,6 +736,7 @@ app.post("/webhook", async (req, res) => {
               from: from,
               text: "soporte",
               type: "incoming_message",
+              tipo: "text",
               object: "whatsapp_business_account",
               // 🔴 NO incluir cola/pausa aquí - solo guardar el mensaje
             },
@@ -771,6 +772,7 @@ app.post("/webhook", async (req, res) => {
               from: from,
               text: "soporte",
               type: "incoming_message",
+              tipo: "text",
               event: "support_requested",
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
