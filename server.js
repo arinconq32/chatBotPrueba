@@ -179,14 +179,6 @@ app.post("/webhook", async (req, res) => {
       console.log(
         `⏳ Usuario ${from} está esperando agente, ignorando mensaje`,
       );
-      console.log(`   → Mensaje ignorado: "${text}"`);
-      // Opcional: recordarle que espere
-      const reminderPayload = {
-        type: "text",
-        text: "⏳ Por favor espera, estamos conectándote con un agente...",
-      };
-      await sendGupshupMessage(from, reminderPayload);
-
       return res.sendStatus(200);
     }
 
@@ -243,7 +235,7 @@ app.post("/webhook", async (req, res) => {
             {
               from: from,
               text: "soporte",
-              type: "bot_request",
+              type: "incoming_message",
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
               cola: "PRUEBAS",
@@ -287,47 +279,6 @@ app.post("/webhook", async (req, res) => {
           text: "❌ No entendí tu respuesta.\n\nEscribe *menu* para ver las opciones disponibles.",
         };
       }
-    }
-
-    // ✅ BLOQUEAR mensajes del cliente mientras espera
-    if (sessions[from].state === STATES.CONNECTING) {
-      console.log(`⏳ Usuario ${from} está esperando agente`);
-      console.log(`   → Mensaje ignorado: "${text}"`);
-
-      // Opcional: recordarle que espere
-      const reminderPayload = {
-        type: "text",
-        text: "⏳ Por favor espera, estamos conectándote con un agente...",
-      };
-      await sendGupshupMessage(from, reminderPayload);
-
-      return res.sendStatus(200); // ← NO reenviar nada al servidor
-    }
-
-    // ✅ SOLO reenviar cuando YA ESTÁ con agente
-    if (sessions[from].state === STATES.WITH_AGENT) {
-      console.log(`📤 Reenviando mensaje de ${from} al agente...`);
-
-      let payloadToSupport = {
-        from,
-        text: text || "",
-        type: "incoming_message",
-        message_type: messageType,
-        timestamp: new Date().toISOString(),
-        object: "whatsapp_business_account",
-      };
-
-      try {
-        await axios.post(
-          "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
-          payloadToSupport,
-          { timeout: 10000 },
-        );
-        console.log(`✅ Mensaje reenviado al servidor`);
-      } catch (e) {
-        console.error("❌ Error reenviando:", e.message);
-      }
-      return res.sendStatus(200);
     }
 
     // ✅ Enviar respuesta final si existe un payload
