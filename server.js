@@ -184,9 +184,27 @@ app.post("/webhook", async (req, res) => {
 
     // Reset al menú
     if (text === "menu" || text === "menú") {
-      sessions[from].step = "menu";
-      sessions[from].state = STATES.BOT;
-      console.log(`🔄 Sesión reiniciada para ${from}`);
+      sessions[from] = { step: "menu", state: STATES.BOT }; // Reset completo
+      delete sessions[from].requestTime;
+      delete sessions[from].numeroAgente;
+      console.log(`🔄 Sesión REINICIADA completamente para ${from}`);
+
+      // Mostrar menú inmediatamente
+      const menuPayload = {
+        type: "quick_reply",
+        msgid: "menu_principal",
+        content: {
+          type: "text",
+          text: "👋 ¡Bienvenido!\n\n¿En qué podemos ayudarte hoy?",
+        },
+        options: [
+          { type: "text", title: "🛠️ Soporte", postbackText: "btn_soporte" },
+          { type: "text", title: "💰 Ventas", postbackText: "btn_ventas" },
+        ],
+      };
+
+      await sendGupshupMessage(from, menuPayload);
+      return res.sendStatus(200);
     }
 
     let messagePayload = null;
@@ -234,8 +252,8 @@ app.post("/webhook", async (req, res) => {
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
-              text: "soporte",
-              type: "incoming_message",
+              text: "solicitud_soporte_bot", // Cambiar de "soporte" a algo identificable
+              type: "bot_request", // Dejar como bot_request
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
               cola: "PRUEBAS",
@@ -276,8 +294,9 @@ app.post("/webhook", async (req, res) => {
         console.log(`⚠️ Entrada inválida de ${from}: "${text}"`);
         messagePayload = {
           type: "text",
-          text: "❌ No entendí tu respuesta.\n\nEscribe *menu* para ver las opciones disponibles.",
+          text: `❌ Opción no válida: "${text}"\n\nSelecciona una opción del menú o escribe *menu* para ver las opciones disponibles.`,
         };
+        sessions[from].step = "menu"; // Forzar volver al menú
       }
     }
 
