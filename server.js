@@ -100,6 +100,47 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
+  if (data.type === "no_agents_available") {
+    const numeroCliente = data.numeroCliente;
+
+    console.log(`⚠️ No hay agentes disponibles para ${numeroCliente}`);
+
+    if (sessions[numeroCliente]) {
+      sessions[numeroCliente].state = STATES.BOT;
+      sessions[numeroCliente].step = "menu";
+      delete sessions[numeroCliente].requestTime;
+    }
+
+    const messagePayload = {
+      type: "text",
+      text: "⚠️ *Todos los agentes están ocupados*\n\nEn este momento todos nuestros agentes están atendiendo 3 conversaciones.\n\n⏳ Por favor intenta en unos minutos.\n\nEscribe *menu* para volver al inicio.",
+    };
+
+    await sendGupshupMessage(numeroCliente, messagePayload);
+    return res.sendStatus(200);
+  }
+
+  // Timeout
+  if (data.type === "timeout") {
+    const numeroCliente = data.numeroCliente;
+
+    console.log(`⏰ Timeout para ${numeroCliente}`);
+
+    if (sessions[numeroCliente]) {
+      sessions[numeroCliente].state = STATES.BOT;
+      sessions[numeroCliente].step = "menu";
+      delete sessions[numeroCliente].requestTime;
+    }
+
+    const messagePayload = {
+      type: "text",
+      text: "⏰ *Tiempo de espera agotado*\n\nNo hubo respuesta de los agentes.\n\n💡 Escribe *menu* para intentar nuevamente.",
+    };
+
+    await sendGupshupMessage(numeroCliente, messagePayload);
+    return res.sendStatus(200);
+  }
+
   // ✅ Procesar mensajes normales de WhatsApp
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -252,7 +293,7 @@ app.post("/webhook", async (req, res) => {
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
-              text: "solicitud_soporte_bot", // Cambiar de "soporte" a algo identificable
+              text: "soporte", // Cambiar de "soporte" a algo identificable
               type: "bot_request", // Dejar como bot_request
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
