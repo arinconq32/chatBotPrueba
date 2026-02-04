@@ -228,14 +228,14 @@ app.post("/webhook", async (req, res) => {
         await sendGupshupMessage(from, messagePayload);
         console.log(`📤 Mensaje de espera enviado a ${from}`);
 
-        // ✅ Enviar solicitud al servidor (SOLO para guardar en BD y emitir colas)
         try {
           await axios.post(
             "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
             {
               from: from,
               text: "soporte",
-              type: "incoming_message",
+              type: "support_request", // ← Cambiar tipo
+              message_type: "text",
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
               cola: "PRUEBAS",
@@ -245,23 +245,34 @@ app.post("/webhook", async (req, res) => {
           );
 
           console.log(
-            `✅ Solicitud enviada al servidor (esperando aceptación de agente...)`,
+            `✅ Solicitud de soporte enviada (esperando aceptación...)`,
           );
-        } catch (error) {
-          // Solo manejar errores de red/servidor
-          console.error(`❌ Error al enviar solicitud:`, error.message);
+          console.log(
+            `✅ Solicitud de soporte enviada (esperando aceptación...)`,
+          );
 
-          // Restablecer estado
+          // ⏰ Timeout de 2 minutos si no hay respuesta
+          setTimeout(() => {
+            if (sessions[from] && sessions[from].state === STATES.CONNECTING) {
+              console.log(`⏰ Timeout para ${from} - sin respuesta de agente`);
+              sessions[from].state = STATES.BOT;
+              sessions[from].step = "menu";
+
+              sendGupshupMessage(from, {
+                type: "text",
+                text: "⏰ No hay agentes disponibles en este momento.\n\nEscribe *menu* para ver otras opciones.",
+              });
+            }
+          }, 120000); // 2 minutos
+        } catch (error) {
+          console.error(`❌ Error enviando solicitud:`, error.message);
           sessions[from].state = STATES.BOT;
           sessions[from].step = "menu";
-          delete sessions[from].requestTime;
 
-          const failurePayload = {
+          await sendGupshupMessage(from, {
             type: "text",
-            text: "🛠️ *Soporte Técnico*\n\n❌ Error al conectar con el servidor.\n\n💡 Escribe *menu* para intentar nuevamente.",
-          };
-
-          await sendGupshupMessage(from, failurePayload);
+            text: "❌ Error al conectar.\n\nEscribe *menu* para intentar nuevamente.",
+          });
         }
 
         return res.sendStatus(200);
