@@ -234,6 +234,7 @@ app.post("/webhook", async (req, res) => {
             {
               from: from,
               text: "soporte",
+              tipo: "text",
               type: "support_request", // ← Cambiar tipo
               message_type: "text",
               object: "whatsapp_business_account",
