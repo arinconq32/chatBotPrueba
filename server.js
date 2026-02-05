@@ -14,6 +14,11 @@ const STATES = {
   WITH_AGENT: "with_agent",
 };
 
+const END_COMMANDS = new Set(["finalizar", "salir"]);
+const SUPPORT_WEBHOOK_URL =
+  process.env.SUPPORT_WEBHOOK_URL ||
+  "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
+
 const sessions = {};
 
 // Helper para enviar mensajes a Gupshup
@@ -158,6 +163,38 @@ app.post("/webhook", async (req, res) => {
 
     // Si ya está con un agente, reenviar mensaje
     if (sessions[from].state === STATES.WITH_AGENT) {
+      if (END_COMMANDS.has(text)) {
+        sessions[from].state = STATES.BOT;
+        sessions[from].step = "menu";
+        if (sessions[from].timeoutId) {
+          clearTimeout(sessions[from].timeoutId);
+          delete sessions[from].timeoutId;
+        }
+
+        await sendGupshupMessage(from, {
+          type: "text",
+          text: "✅ Conversación finalizada. Escribe *menu* para ver opciones.",
+        });
+
+        try {
+          await axios.post(
+            SUPPORT_WEBHOOK_URL,
+            {
+              from,
+              type: "chat_ended",
+              reason: "user_command",
+              timestamp: new Date().toISOString(),
+            },
+            { timeout: 10000 },
+          );
+          console.log(`✅ Fin de chat notificado para ${from}`);
+        } catch (e) {
+          console.error("❌ Error notificando fin de chat:", e.message);
+        }
+
+        return res.sendStatus(200);
+      }
+
       console.log(`📤 Reenviando mensaje de ${from} al agente...`);
 
       let payloadToSupport = {
@@ -170,11 +207,9 @@ app.post("/webhook", async (req, res) => {
       };
 
       try {
-        await axios.post(
-          "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
-          payloadToSupport,
-          { timeout: 10000 },
-        );
+        await axios.post(SUPPORT_WEBHOOK_URL, payloadToSupport, {
+          timeout: 10000,
+        });
         console.log(`✅ Mensaje reenviado al servidor`);
       } catch (e) {
         console.error("❌ Error reenviando al soporte:", e.message);
