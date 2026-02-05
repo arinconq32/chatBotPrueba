@@ -7,6 +7,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const SUPPORT_WEBHOOK_URL =
+  process.env.SUPPORT_WEBHOOK_URL ||
+  "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
+
 // Estados de la conversación
 const STATES = {
   BOT: "bot",
@@ -163,7 +167,7 @@ app.post("/webhook", async (req, res) => {
 
       try {
         await axios.post(
-          "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+          SUPPORT_WEBHOOK_URL,
           payloadToSupport,
           { timeout: 10000 },
         );
@@ -230,7 +234,7 @@ app.post("/webhook", async (req, res) => {
 
         try {
           await axios.post(
-            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            SUPPORT_WEBHOOK_URL,
             {
               from: from,
               text: "soporte",
