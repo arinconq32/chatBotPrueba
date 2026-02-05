@@ -14,9 +14,6 @@ const STATES = {
   WITH_AGENT: "with_agent",
 };
 
-const SUPPORT_COMMANDS = new Set(["btn_soporte", "soporte"]);
-const END_COMMANDS = new Set(["menu", "menú", "finalizar", "salir"]);
-
 const sessions = {};
 
 // Helper para enviar mensajes a Gupshup
@@ -92,7 +89,6 @@ app.post("/webhook", async (req, res) => {
     sessions[numeroCliente].state = STATES.WITH_AGENT;
     sessions[numeroCliente].numeroAgente = numeroAgente;
     sessions[numeroCliente].connectedAt = Date.now(); // Timestamp de conexión
-    sessions[numeroCliente].supportEstablished = true;
 
     console.log(`✅ Sesión establecida: ${numeroCliente} ↔ ${numeroAgente}`);
 
@@ -160,21 +156,8 @@ app.post("/webhook", async (req, res) => {
       console.log(`👤 Nueva sesión creada para ${from}`);
     }
 
-    // Si ya está con un agente, reenviar mensaje solo si la sesión está establecida
+    // Si ya está con un agente, reenviar mensaje
     if (sessions[from].state === STATES.WITH_AGENT) {
-      if (END_COMMANDS.has(text)) {
-        sessions[from].state = STATES.BOT;
-        sessions[from].step = "menu";
-        sessions[from].supportEstablished = false;
-        console.log(`🛑 Conversación finalizada por ${from}`);
-        return res.sendStatus(200);
-      }
-
-      if (!sessions[from].supportEstablished) {
-        console.log(`⚠️ Mensaje ignorado (${from}) - soporte no establecido`);
-        return res.sendStatus(200);
-      }
-
       console.log(`📤 Reenviando mensaje de ${from} al agente...`);
 
       let payloadToSupport = {
@@ -208,7 +191,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Reset al menú
-    if (END_COMMANDS.has(text)) {
+    if (text === "menu" || text === "menú") {
       // Limpiar timeout si existe
       if (sessions[from].timeoutId) {
         clearTimeout(sessions[from].timeoutId);
@@ -241,7 +224,7 @@ app.post("/webhook", async (req, res) => {
     }
     // FLUJO DEL BOT - OPCIONES
     else if (sessions[from].step === "option") {
-      if (SUPPORT_COMMANDS.has(text)) {
+      if (text === "btn_soporte" || text === "soporte") {
         console.log(`\n${"=".repeat(60)}`);
         console.log(`🔄 Usuario ${from} solicita soporte`);
         console.log(`${"=".repeat(60)}\n`);
