@@ -271,7 +271,7 @@ app.post("/webhook", async (req, res) => {
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
               cola: "PRUEBAS",
-              pausa: 1,
+              pausa: 2,
             },
             { timeout: 10000 },
           );
