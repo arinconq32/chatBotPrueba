@@ -78,16 +78,24 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // ✅ CANCELAR EL TIMEOUT antes de establecer la conexión
+    if (sessions[numeroCliente].timeoutId) {
+      clearTimeout(sessions[numeroCliente].timeoutId);
+      console.log(`⏰ Timeout cancelado para ${numeroCliente}`);
+      delete sessions[numeroCliente].timeoutId;
+    }
+
     // ✅ Establecer sesión
     sessions[numeroCliente].state = STATES.WITH_AGENT;
     sessions[numeroCliente].numeroAgente = numeroAgente;
+    sessions[numeroCliente].connectedAt = Date.now(); // Timestamp de conexión
 
     console.log(`✅ Sesión establecida: ${numeroCliente} ↔ ${numeroAgente}`);
 
     // ✅ Enviar confirmación al cliente
     const successPayload = {
       type: "text",
-      text: `✅ *Agente conectado*\n\nAhora estás en conversación privada con el agente *${numeroAgente}*.\n\n📱 Escribe tu consulta aquí.`,
+      text: `✅ *Agente conectado*\n\nAhora estás en conversación privada con el agente.\n\n📱 Escribe tu consulta aquí.`,
     };
 
     try {
@@ -184,6 +192,12 @@ app.post("/webhook", async (req, res) => {
 
     // Reset al menú
     if (text === "menu" || text === "menú") {
+      // Limpiar timeout si existe
+      if (sessions[from].timeoutId) {
+        clearTimeout(sessions[from].timeoutId);
+        delete sessions[from].timeoutId;
+      }
+
       sessions[from].step = "menu";
       sessions[from].state = STATES.BOT;
       console.log(`🔄 Sesión reiniciada para ${from}`);
@@ -217,7 +231,7 @@ app.post("/webhook", async (req, res) => {
 
         // ✅ Cambiar estado a CONNECTING
         sessions[from].state = STATES.CONNECTING;
-        sessions[from].requestTime = Date.now(); // ← Guardar timestamp
+        sessions[from].requestTime = Date.now();
 
         // ✅ Enviar mensaje de espera
         messagePayload = {
@@ -235,7 +249,7 @@ app.post("/webhook", async (req, res) => {
               from: from,
               text: "soporte",
               tipo: "text",
-              type: "support_request", // ← Cambiar tipo
+              type: "support_request",
               message_type: "text",
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
@@ -248,23 +262,30 @@ app.post("/webhook", async (req, res) => {
           console.log(
             `✅ Solicitud de soporte enviada (esperando aceptación...)`,
           );
-          console.log(
-            `✅ Solicitud de soporte enviada (esperando aceptación...)`,
-          );
 
-          // ⏰ Timeout de 2 minutos si no hay respuesta
-          setTimeout(() => {
+          // ⏰ Guardar el ID del timeout para poder cancelarlo después
+          const timeoutId = setTimeout(() => {
+            // Verificar que la sesión AÚN existe y AÚN está en CONNECTING
             if (sessions[from] && sessions[from].state === STATES.CONNECTING) {
               console.log(`⏰ Timeout para ${from} - sin respuesta de agente`);
               sessions[from].state = STATES.BOT;
               sessions[from].step = "menu";
+              delete sessions[from].timeoutId;
 
               sendGupshupMessage(from, {
                 type: "text",
                 text: "⏰ No hay agentes disponibles en este momento.\n\nEscribe *menu* para ver otras opciones.",
               });
+            } else {
+              console.log(
+                `⏰ Timeout ignorado para ${from} - ya está conectado`,
+              );
             }
           }, 120000); // 2 minutos
+
+          // Guardar el ID del timeout en la sesión
+          sessions[from].timeoutId = timeoutId;
+          console.log(`⏰ Timeout programado para ${from} (ID: ${timeoutId})`);
         } catch (error) {
           console.error(`❌ Error enviando solicitud:`, error.message);
           sessions[from].state = STATES.BOT;
