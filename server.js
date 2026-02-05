@@ -176,30 +176,42 @@ app.post("/webhook", async (req, res) => {
     // Si ya está con un agente, reenviar mensaje
     if (sessions[from].state === STATES.WITH_AGENT) {
       if (END_COMMANDS.has(text)) {
+        console.log(`\n${"🔴".repeat(35)}`);
+        console.log(`🔚 Usuario ${from} finalizó conversación con agente`);
+        console.log(`${"🔴".repeat(35)}\n`);
+
+        // Limpiar datos de la sesión con agente
+        const numeroAgente = sessions[from].numeroAgente;
         sessions[from].state = STATES.BOT;
         sessions[from].step = "menu";
+        delete sessions[from].numeroAgente;
+        delete sessions[from].connectedAt;
+
         if (sessions[from].timeoutId) {
           clearTimeout(sessions[from].timeoutId);
           delete sessions[from].timeoutId;
         }
 
+        // Mensaje claro de finalización
         await sendGupshupMessage(from, {
           type: "text",
-          text: "✅ Conversación finalizada. Escribe *menu* para ver opciones.",
+          text: "👋 *Conversación con agente finalizada*\n\n✅ Has vuelto al chatbot automático.\n\nAhora puedo ayudarte con:\n• Ver el menú principal\n• Solicitar nuevo soporte\n• Información de ventas\n\nEscribe *menu* para ver las opciones.",
         });
 
+        // Notificar al servidor de soporte
         try {
           await axios.post(
             SUPPORT_WEBHOOK_URL,
             {
               from,
+              numeroAgente,
               type: "chat_ended",
               reason: "user_command",
               timestamp: new Date().toISOString(),
             },
             { timeout: 10000 },
           );
-          console.log(`✅ Fin de chat notificado para ${from}`);
+          console.log(`✅ Fin de chat notificado al servidor para ${from}`);
         } catch (e) {
           console.error("❌ Error notificando fin de chat:", e.message);
         }
