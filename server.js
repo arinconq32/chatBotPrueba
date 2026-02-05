@@ -123,12 +123,23 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from;
     let text = "";
+    let rawText = "";
     let messageType = "text";
 
     // Detectar tipo de mensaje y extraer contenido
     switch (message.type) {
       case "text":
-        text = message.text.body.toLowerCase().trim();
+        rawText = (message.text?.body || "").trim();
+        if (
+          rawText.startsWith("{") &&
+          rawText.includes('"type":"agent_accepted"')
+        ) {
+          console.log(
+            `🧩 Mensaje interno agent_accepted ignorado para ${from}`,
+          );
+          return res.sendStatus(200);
+        }
+        text = rawText.toLowerCase();
         messageType = "text";
         console.log(`📨 Mensaje de texto recibido de ${from}: "${text}"`);
         break;
@@ -144,6 +155,7 @@ app.post("/webhook", async (req, res) => {
             text = reply.id;
           }
         }
+        text = (text || "").toLowerCase().trim();
         messageType = "interactive";
         console.log(`🔘 Interactivo recibido de ${from}: "${text}"`);
         break;
