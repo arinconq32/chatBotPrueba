@@ -113,6 +113,53 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
+  // ✅ NUEVO: Detectar cuando el aplicativo envía fin de chat
+  if (data.type === "chat_ended") {
+    const numeroCliente = data.numeroCliente || data.from;
+    const numeroAgente = data.numeroAgente;
+
+    console.log(`\n${"🔴".repeat(35)}`);
+    console.log(`🔚 CHAT FINALIZADO DESDE APLICATIVO`);
+    console.log(`   • Cliente: ${numeroCliente}`);
+    if (numeroAgente) {
+      console.log(`   • Agente: ${numeroAgente}`);
+    }
+    console.log(`${"🔴".repeat(35)}\n`);
+
+    if (!numeroCliente) {
+      console.warn("⚠️ chat_ended sin numeroCliente");
+      return res.sendStatus(200);
+    }
+
+    // Asegurar sesion y volver al bot
+    if (!sessions[numeroCliente]) {
+      sessions[numeroCliente] = { step: "menu", state: STATES.BOT };
+    } else {
+      sessions[numeroCliente].state = STATES.BOT;
+      sessions[numeroCliente].step = "menu";
+      delete sessions[numeroCliente].numeroAgente;
+      delete sessions[numeroCliente].connectedAt;
+
+      if (sessions[numeroCliente].timeoutId) {
+        clearTimeout(sessions[numeroCliente].timeoutId);
+        delete sessions[numeroCliente].timeoutId;
+      }
+    }
+
+    // Mensaje de cierre y vuelta al bot
+    try {
+      await sendGupshupMessage(numeroCliente, {
+        type: "text",
+        text: "👋 *Conversacion finalizada*\n\n✅ Has vuelto al chatbot automatico.\n\nEscribe *menu* para ver las opciones.",
+      });
+      console.log(`✅ Mensaje de cierre enviado a ${numeroCliente}`);
+    } catch (error) {
+      console.error("❌ Error enviando mensaje de cierre:", error.message);
+    }
+
+    return res.sendStatus(200);
+  }
+
   // ✅ Procesar mensajes normales de WhatsApp
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -158,6 +205,12 @@ app.post("/webhook", async (req, res) => {
         text = (text || "").toLowerCase().trim();
         messageType = "interactive";
         console.log(`🔘 Interactivo recibido de ${from}: "${text}"`);
+        break;
+
+      case "reaction":
+        text = message.reaction?.emoji || "";
+        messageType = "reaction";
+        console.log(`😀 Reaccion recibida de ${from}: "${text}"`);
         break;
 
       default:
