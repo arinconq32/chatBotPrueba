@@ -15,9 +15,7 @@ const STATES = {
 };
 
 const END_COMMANDS = new Set(["finalizar", "salir"]);
-const SUPPORT_WEBHOOK_URL =
-  process.env.SUPPORT_WEBHOOK_URL ||
-  "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook";
+const SUPPORT_WEBHOOK_URL = process.env.SUPPORT_WEBHOOK_URL;
 
 const sessions = {};
 
@@ -25,19 +23,19 @@ const sessions = {};
 async function sendGupshupMessage(destination, payload) {
   const params = new URLSearchParams({
     channel: "whatsapp",
-    source: process.env.GS_SOURCE_NUMBER || "919999900095",
+    source: process.env.GUPSHUP_SOURCE || "919999900095",
     destination: destination,
     message: JSON.stringify(payload),
-    "src.name": process.env.GUPSHUP_APP_NAME || "chatbotPruebas32",
+    "src.name": process.env.GUPSHUP_APP_NAME,
   });
 
   try {
     const response = await axios.post(
-      "https://api.gupshup.io/wa/api/v1/msg",
+      process.env.GUPSHUP_API_URL_FINAL,
       params.toString(),
       {
         headers: {
-          apikey: process.env.GUPSHUP_API_KEY,
+          apikey: process.env.GUPSHUP_API_KEY_FINAL,
           "Content-Type": "application/x-www-form-urlencoded",
           "Cache-Control": "no-cache",
         },
@@ -356,7 +354,7 @@ app.post("/webhook", async (req, res) => {
 
         try {
           await axios.post(
-            "https://sabrina-agglutinable-maynard.ngrok-free.dev/webhook",
+            process.env.SUPPORT_WEBHOOK_URL,
             {
               from: from,
               text: "soporte",
@@ -440,5 +438,5 @@ app.post("/webhook", async (req, res) => {
 
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Bot servidor en puerto ${PORT}`));
