@@ -21,26 +21,32 @@ const sessions = {};
 
 // Helper para enviar mensajes a Gupshup
 async function sendGupshupMessage(destination, payload) {
-  const params = new URLSearchParams({
+  const apiUrl = process.env.GUPSHUP_API_URL_FINAL || "";
+  const isPartnerV3 = apiUrl.includes("partner.gupshup.io");
+  const body = {
     channel: "whatsapp",
     source: process.env.GUPSHUP_SOURCE,
     destination: destination,
-    message: JSON.stringify(payload),
+    message: payload,
     "src.name": process.env.GUPSHUP_APP_NAME,
-  });
+  };
 
   try {
-    const response = await axios.post(
-      process.env.GUPSHUP_API_URL_FINAL,
-      params.toString(),
-      {
-        headers: {
-          apikey: process.env.GUPSHUP_API_KEY_FINAL,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cache-Control": "no-cache",
-        },
+    const response = await axios.post(apiUrl, isPartnerV3 ? body : new URLSearchParams({
+      channel: body.channel,
+      source: body.source,
+      destination: body.destination,
+      message: JSON.stringify(body.message),
+      "src.name": body["src.name"],
+    }).toString(), {
+      headers: {
+        apikey: process.env.GUPSHUP_API_KEY_FINAL,
+        "Content-Type": isPartnerV3
+          ? "application/json"
+          : "application/x-www-form-urlencoded",
+        "Cache-Control": "no-cache",
       },
-    );
+    });
     console.log(`✅ Mensaje enviado a ${destination}`);
     return response.data;
   } catch (error) {
