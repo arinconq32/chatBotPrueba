@@ -51,6 +51,10 @@ async function sendGupshupMessage(destination, payload) {
     return response.data;
   } catch (error) {
     console.error(`❌ Error enviando mensaje a ${destination}:`, error.message);
+    if (error.response) {
+      console.error("🔎 Gupshup status:", error.response.status);
+      console.error("🔎 Gupshup data:", error.response.data);
+    }
     throw error;
   }
 }
