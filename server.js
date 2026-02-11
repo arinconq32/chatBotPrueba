@@ -23,7 +23,7 @@ const sessions = {};
 async function sendGupshupMessage(destination, payload) {
   const params = new URLSearchParams({
     channel: "whatsapp",
-    source: process.env.GUPSHUP_SOURCE || "919999900095",
+    source: process.env.GUPSHUP_SOURCE,
     destination: destination,
     message: JSON.stringify(payload),
     "src.name": process.env.GUPSHUP_APP_NAME,
