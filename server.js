@@ -40,7 +40,9 @@ async function sendGupshupMessage(destination, payload) {
       "src.name": body["src.name"],
     }).toString(), {
       headers: {
-        apikey: process.env.GUPSHUP_API_KEY_FINAL,
+        ...(isPartnerV3
+          ? { Authorization: `Bearer ${process.env.GUPSHUP_API_KEY_FINAL}` }
+          : { apikey: process.env.GUPSHUP_API_KEY_FINAL }),
         "Content-Type": isPartnerV3
           ? "application/json"
           : "application/x-www-form-urlencoded",
