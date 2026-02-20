@@ -1,9 +1,16 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 const express = require("express");
 const axios = require("axios");
+const https = require("https");
 const FormData = require("form-data");
 
 const app = express();
+
+// Agente HTTPS que permite certificados auto-firmados (para comunicación interna)
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -19,43 +26,119 @@ const SUPPORT_WEBHOOK_URL = process.env.SUPPORT_WEBHOOK_URL;
 
 const sessions = {};
 
-// Helper para enviar mensajes a Gupshup
+// Helper para enviar mensajes a Gupshup (formato Partner API v3 - igual que server.py)
 async function sendGupshupMessage(destination, payload) {
   const apiUrl = process.env.GUPSHUP_API_URL_FINAL || "";
-  const isPartnerV3 = apiUrl.includes("partner.gupshup.io");
+
+  if (!apiUrl) {
+    console.error("❌ GUPSHUP_API_URL_FINAL no está configurado en .env");
+    throw new Error("GUPSHUP_API_URL_FINAL no configurado");
+  }
+
+  console.log(
+    "\n📨 PAYLOAD ORIGINAL RECIBIDO:",
+    JSON.stringify(payload, null, 2),
+  );
+
+  // Construir payload en formato Partner API v3 (igual que server.py)
+  let tipoMensaje = payload.type || "text";
   const body = {
-    channel: "whatsapp",
-    source: process.env.GUPSHUP_SOURCE,
-    destination: destination,
-    message: payload,
-    "src.name": process.env.GUPSHUP_APP_NAME,
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: destination,
   };
 
-  try {
-    const response = await axios.post(apiUrl, isPartnerV3 ? body : new URLSearchParams({
-      channel: body.channel,
-      source: body.source,
-      destination: body.destination,
-      message: JSON.stringify(body.message),
-      "src.name": body["src.name"],
-    }).toString(), {
-      headers: {
-        ...(isPartnerV3
-          ? { Authorization: `Bearer ${process.env.GUPSHUP_API_KEY_FINAL}` }
-          : { apikey: process.env.GUPSHUP_API_KEY_FINAL }),
-        "Content-Type": isPartnerV3
-          ? "application/json"
-          : "application/x-www-form-urlencoded",
-        "Cache-Control": "no-cache",
+  // Agregar contenido según el tipo de mensaje
+  if (tipoMensaje === "text") {
+    body.type = "text";
+    body.text = {
+      body: payload.text || "",
+    };
+  } else if (tipoMensaje === "quick_reply") {
+    // Convertir quick_reply a formato interactive de la API v3
+    body.type = "interactive";
+    body.interactive = {
+      type: "button",
+      body: {
+        text: payload.content?.text || payload.text || "Selecciona una opción",
       },
-    });
+      action: {
+        buttons: (payload.options || []).slice(0, 3).map((opt, index) => ({
+          type: "reply",
+          reply: {
+            id: opt.postbackText || `btn_${index}`,
+            title: (opt.title || "Opción").substring(0, 20), // Máximo 20 caracteres
+          },
+        })),
+      },
+    };
+  } else if (tipoMensaje === "image") {
+    body.type = "image";
+    body.image = {
+      link: payload.originalUrl || payload.url || "",
+      caption: payload.caption || "",
+    };
+  } else if (tipoMensaje === "document") {
+    body.type = "document";
+    body.document = {
+      link: payload.url || "",
+      filename: payload.filename || "document",
+      caption: payload.caption || "",
+    };
+  } else if (tipoMensaje === "audio") {
+    body.type = "audio";
+    body.audio = {
+      link: payload.url || "",
+    };
+  } else if (tipoMensaje === "video") {
+    body.type = "video";
+    body.video = {
+      link: payload.url || "",
+      caption: payload.caption || "",
+    };
+  } else {
+    // Tipo no reconocido, enviar como texto
+    console.log(`⚠️ Tipo "${tipoMensaje}" no reconocido, enviando como texto`);
+    body.type = "text";
+    body.text = {
+      body: payload.text || payload.content?.text || JSON.stringify(payload),
+    };
+  }
+
+  const headers = {
+    Authorization: process.env.GUPSHUP_API_KEY_FINAL, // Sin "Bearer" - igual que server.py
+    "Content-Type": "application/json",
+  };
+
+  console.log(
+    "\n📤 ========== ENVIANDO MENSAJE GUPSHUP (Partner v3) ==========",
+  );
+  console.log("🔗 URL:", apiUrl);
+  console.log("📱 Destination:", destination);
+  console.log("📦 Body:", JSON.stringify(body, null, 2));
+  console.log(
+    "🔑 Authorization:",
+    "***" + process.env.GUPSHUP_API_KEY_FINAL?.slice(-6),
+  );
+
+  try {
+    const response = await axios.post(apiUrl, body, { headers });
+
     console.log(`✅ Mensaje enviado a ${destination}`);
+    console.log(
+      "📥 Respuesta Gupshup:",
+      JSON.stringify(response.data, null, 2),
+    );
+    console.log("========== FIN ENVÍO ==========\n");
     return response.data;
   } catch (error) {
     console.error(`❌ Error enviando mensaje a ${destination}:`, error.message);
     if (error.response) {
       console.error("🔎 Gupshup status:", error.response.status);
-      console.error("🔎 Gupshup data:", error.response.data);
+      console.error(
+        "🔎 Gupshup data:",
+        JSON.stringify(error.response.data, null, 2),
+      );
     }
     throw error;
   }
@@ -75,25 +158,29 @@ app.post("/webhook", async (req, res) => {
     console.log(`   • Cliente: ${numeroCliente}`);
     console.log(`${"🟢".repeat(35)}\n`);
 
-    // Verificar que la sesión existe
+    // Crear sesión si no existe
     if (!sessions[numeroCliente]) {
-      console.warn(`⚠️ No existe sesión para ${numeroCliente}`);
-      console.warn(`   Sesiones activas:`, Object.keys(sessions));
-      return res.sendStatus(200);
+      console.log(`📝 Creando sesión para ${numeroCliente}`);
+      sessions[numeroCliente] = { step: "menu", state: STATES.BOT };
     }
 
-    // Verificar estado
+    // Verificar estado actual
     console.log(`📊 Estado actual de sesión ${numeroCliente}:`);
     console.log(`   • State: ${sessions[numeroCliente].state}`);
     console.log(`   • Step: ${sessions[numeroCliente].step}`);
 
-    if (sessions[numeroCliente].state !== STATES.CONNECTING) {
-      console.warn(`⚠️ Cliente ${numeroCliente} NO está en CONNECTING`);
-      console.warn(`   Estado actual: ${sessions[numeroCliente].state}`);
+    // Si ya está con OTRO agente, rechazar
+    if (
+      sessions[numeroCliente].state === STATES.WITH_AGENT &&
+      sessions[numeroCliente].numeroAgente !== numeroAgente
+    ) {
+      console.warn(
+        `⚠️ Cliente ${numeroCliente} ya está con otro agente: ${sessions[numeroCliente].numeroAgente}`,
+      );
       return res.sendStatus(200);
     }
 
-    // ✅ CANCELAR EL TIMEOUT antes de establecer la conexión
+    // ✅ CANCELAR EL TIMEOUT si existe
     if (sessions[numeroCliente].timeoutId) {
       clearTimeout(sessions[numeroCliente].timeoutId);
       console.log(`⏰ Timeout cancelado para ${numeroCliente}`);
@@ -217,6 +304,33 @@ app.post("/webhook", async (req, res) => {
         console.log(`🔘 Interactivo recibido de ${from}: "${text}"`);
         break;
 
+      case "image":
+        rawText = message.image?.caption || "";
+        text = rawText.toLowerCase();
+        messageType = "image";
+        console.log(`🖼️ Imagen recibida de ${from}`);
+        break;
+
+      case "document":
+        rawText = message.document?.caption || message.document?.filename || "";
+        text = rawText.toLowerCase();
+        messageType = "document";
+        console.log(`📄 Documento recibido de ${from}`);
+        break;
+      case "audio":
+        const audioUrl = message.audio?.url || message.audio?.link || "";
+        text = "[Audio]";
+        messageType = "audio";
+
+        console.log(`🎵 Audio recibido de ${from}: ${audioUrl}`);
+
+        break;
+      case "video":
+        rawText = message.video?.caption || "";
+        text = rawText.toLowerCase();
+        messageType = "video";
+        console.log(`🎬 Video recibido de ${from}`);
+        break;
       case "reaction":
         text = message.reaction?.emoji || "";
         messageType = "reaction";
@@ -236,8 +350,38 @@ app.post("/webhook", async (req, res) => {
       console.log(`👤 Nueva sesión creada para ${from}`);
     }
 
-    // Si ya está con un agente, reenviar mensaje
+    // 🔥 SINCRONIZAR con el servidor: Verificar si el cliente tiene agente asignado
+    try {
+      const estadoResponse = await axios.get(
+        `${SUPPORT_WEBHOOK_URL.replace("/webhook", "")}/cliente-estado/${from}`,
+        { timeout: 3000, httpsAgent },
+      );
+
+      if (estadoResponse.data.tieneAgente) {
+        console.log(
+          `🔄 SINCRONIZACIÓN: ${from} tiene agente ${estadoResponse.data.agente} en servidor`,
+        );
+
+        // Actualizar sesión local para que coincida con servidor
+        if (sessions[from].state !== STATES.WITH_AGENT) {
+          sessions[from].state = STATES.WITH_AGENT;
+          sessions[from].numeroAgente = estadoResponse.data.agente;
+          console.log(`✅ Sesión local actualizada a WITH_AGENT`);
+        }
+      }
+    } catch (syncError) {
+      console.log(
+        `⚠️ No se pudo sincronizar estado con servidor: ${syncError.message}`,
+      );
+    }
+
+    console.log(
+      `📊 Estado sesión ${from}: ${sessions[from].state} (step: ${sessions[from].step})`,
+    );
+
+    // 🔥 CRÍTICO: Si está con un agente, SOLO reenviar al agente (NO procesar en bot)
     if (sessions[from].state === STATES.WITH_AGENT) {
+      // Solo permitir comandos de salida
       if (END_COMMANDS.has(text)) {
         console.log(`\n${"🔴".repeat(35)}`);
         console.log(`🔚 Usuario ${from} finalizó conversación con agente`);
@@ -272,7 +416,7 @@ app.post("/webhook", async (req, res) => {
               reason: "user_command",
               timestamp: new Date().toISOString(),
             },
-            { timeout: 10000 },
+            { timeout: 10000, httpsAgent },
           );
           console.log(`✅ Fin de chat notificado al servidor para ${from}`);
         } catch (e) {
@@ -282,20 +426,48 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      console.log(`📤 Reenviando mensaje de ${from} al agente...`);
+      // 🔥 Reenviar CUALQUIER otro mensaje al agente (incluyendo "menu")
+      console.log(
+        `📤 Cliente ${from} CON AGENTE - Reenviando mensaje al servidor...`,
+      );
 
       let payloadToSupport = {
         from,
-        text: text || "",
+        text: rawText || text || "",
         type: "incoming_message",
         message_type: messageType,
         timestamp: new Date().toISOString(),
         object: "whatsapp_business_account",
+        ...(messageType === "image" && {
+          mediaUrl: message.image?.id || "",
+          url: message.image?.url || "", // ← AGREGAR
+          mime_type: message.image?.mime_type || "image/jpeg", // ← AGREGAR
+          caption: message.image?.caption || "",
+        }),
+        ...(messageType === "document" && {
+          mediaUrl: message.document?.id || "",
+          url: message.document?.url || "", // ← AGREGAR
+          mime_type: message.document?.mime_type || "application/octet-stream", // ← AGREGAR
+          filename: message.document?.filename || "",
+          caption: message.document?.caption || "",
+        }),
+        ...(messageType === "audio" && {
+          mediaUrl: message.audio?.id || "",
+          url: message.audio?.url || "", // ← AGREGAR
+          mime_type: message.audio?.mime_type || "audio/mpeg", // ← AGREGAR
+        }),
+        ...(messageType === "video" && {
+          mediaUrl: message.video?.id || "",
+          url: message.video?.url || "", // ← AGREGAR
+          mime_type: message.video?.mime_type || "video/mp4", // ← AGREGAR
+          caption: message.video?.caption || "",
+        }),
       };
 
       try {
         await axios.post(SUPPORT_WEBHOOK_URL, payloadToSupport, {
           timeout: 10000,
+          httpsAgent,
         });
         console.log(`✅ Mensaje reenviado al servidor`);
       } catch (e) {
@@ -312,7 +484,7 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Reset al menú
+    // Reset al menú (solo si NO está con agente)
     if (text === "menu" || text === "menú") {
       // Limpiar timeout si existe
       if (sessions[from].timeoutId) {
@@ -375,10 +547,10 @@ app.post("/webhook", async (req, res) => {
               message_type: "text",
               object: "whatsapp_business_account",
               timestamp: new Date().toISOString(),
-              cola: "PRUEBAS",
+              cola: "LuisPruebas",
               pausa: 2,
             },
-            { timeout: 10000 },
+            { timeout: 10000, httpsAgent },
           );
 
           console.log(
@@ -450,5 +622,5 @@ app.post("/webhook", async (req, res) => {
 
 app.get("/", (req, res) => res.send("Bot Online 🚀"));
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.CHATBOT_PORT || 4000;
 app.listen(PORT, () => console.log(`🚀 Bot servidor en puerto ${PORT}`));
