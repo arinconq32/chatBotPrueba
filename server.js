@@ -106,8 +106,14 @@ async function sendGupshupMessage(destination, payload) {
     };
   }
 
+  // Authorization para Partner API (comentado para API estándar)
+  // const headers = {
+  //   Authorization: process.env.GUPSHUP_API_KEY_FINAL, // Sin "Bearer" - igual que server.py
+  //   "Content-Type": "application/json",
+  // };
+  // Header correcto para API estándar de Gupshup
   const headers = {
-    Authorization: process.env.GUPSHUP_API_KEY_FINAL, // Sin "Bearer" - igual que server.py
+    apikey: process.env.GUPSHUP_API_KEY_FINAL,
     "Content-Type": "application/json",
   };
 
