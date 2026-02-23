@@ -24,6 +24,17 @@ const SUPPORT_WEBHOOK_URL = process.env.SUPPORT_WEBHOOK_URL;
 
 const sessions = {};
 
+console.log(
+  "🔑 API KEY CARGADA:",
+  JSON.stringify(process.env.GUPSHUP_API_KEY_FINAL),
+);
+console.log(
+  "🔗 URL CARGADA:",
+  JSON.stringify(process.env.GUPSHUP_API_URL_FINAL),
+);
+console.log("📱 SOURCE:", JSON.stringify(process.env.GUPSHUP_SOURCE));
+console.log("📛 APP NAME:", JSON.stringify(process.env.GUPSHUP_APP_NAME));
+
 // ─────────────────────────────────────────────────────────────
 // OPCIÓN 1: Partner API v3  (body JSON, header Authorization)
 // ─────────────────────────────────────────────────────────────
