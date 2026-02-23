@@ -96,7 +96,7 @@ async function sendViaPartnerV3(destination, payload) {
   }
 
   const headers = {
-    apikey: process.env.GUPSHUP_API_KEY_FINAL,
+    Authorization: `Bearer ${process.env.GUPSHUP_API_KEY_FINAL}`,
     "Content-Type": "application/json",
   };
 
