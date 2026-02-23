@@ -103,7 +103,7 @@ async function sendViaLegacy(destination, payload) {
     process.env.GUPSHUP_API_URL_LEGACY ||
     "https://api.gupshup.io/sm/api/v1/msg";
 
-  const source = process.env.GUPSHUP_SOURCE_NUMBER;
+  const source = process.env.GUPSHUP_SOURCE;
   const appName = process.env.GUPSHUP_APP_NAME;
 
   if (!source || !appName) {
